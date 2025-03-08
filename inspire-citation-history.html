@@ -11,6 +11,8 @@
     <!-- Add the adapter for date-fns -->
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.xkcd@1.1.13/dist/chart.xkcd.min.js"></script>
+    <!-- Add Font Awesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
     <style>
         body {
             font-family: "Comic Sans MS", "Comic Sans", cursive;
@@ -108,6 +110,13 @@
             padding: 5px 10px;
             margin: 5px;
             font-size: 14px;
+        }
+        .repo-tag-content {
+            cursor: pointer;
+            color: #0366d6;
+        }
+        .repo-tag-content:hover {
+            text-decoration: underline;
         }
         .repo-tag .close {
             margin-left: 8px;
@@ -232,12 +241,27 @@
                 </svg>
                 CSV
             </button>
+            <button id="copy-link" class="export-button">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+                    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+                </svg>
+                Link
+            </button>
         </div>
         
         <div id="debug-info" class="debug-info"></div>
         
         <div class="footer">
             <p>An analogue of <a href="https://star-history.com" target="_blank">GitHub Star History</a>, developed by <a href="https://github.com/vlvovch" target="_blank">vlvovch</a></p>
+            <p style="margin-top: 5px; display: flex; justify-content: center; align-items: center;">
+                <a href="#" onclick="openEmail(); return false;" id="email-link" title="Email me" style="margin-right: 15px; text-decoration: none;">
+                    <i class="fa fa-envelope" style="font-size:24px; color: #000000;"></i>
+                </a>
+                <a href="https://github.com/vlvovch/inspire-citation-history" target="_blank" title="View on GitHub" style="text-decoration: none;">
+                    <i class="fa fa-github" style="font-size:24px; color: #000000;"></i>
+                </a>
+            </p>
         </div>
     </div>
 
@@ -912,7 +936,7 @@
             const recidTag = document.createElement('div');
             recidTag.className = 'repo-tag';
             recidTag.innerHTML = `
-                recid:${recid}
+                <span class="repo-tag-content" onclick="window.open('https://inspirehep.net/literature/${recid}', '_blank')">recid:${recid}</span>
                 <span class="close" data-recid="${recid}">×</span>
             `;
             recidList.appendChild(recidTag);
@@ -935,7 +959,7 @@
                     
                     // Update the UI with proper error checking
                     recidTag.innerHTML = `
-                        ${data.refname || `recid:${recid}`}
+                        <span class="repo-tag-content" onclick="window.open('https://inspirehep.net/literature/${recid}', '_blank')">${data.refname || `recid:${recid}`}</span>
                         <span class="close" data-recid="${recid}">×</span>
                     `;
                     
@@ -1009,6 +1033,7 @@
         // Export button event listeners
         document.getElementById('save-image').addEventListener('click', saveChartAsImage);
         document.getElementById('save-csv').addEventListener('click', exportDataToCSV);
+        document.getElementById('copy-link').addEventListener('click', copyLinkToClipboard);
         
         // Allow pressing Enter in the input field to add a recid
         document.getElementById('recid-input').addEventListener('keypress', function(event) {
@@ -1156,7 +1181,7 @@
                             // Update the tag with the proper name
                             const recidTag = document.querySelector(`.repo-tag .close[data-recid="${recid}"]`).parentElement;
                             recidTag.innerHTML = `
-                                ${data.refname || `recid:${recid}`}
+                                <span class="repo-tag-content" onclick="window.open('https://inspirehep.net/literature/${recid}', '_blank')">${data.refname || `recid:${recid}`}</span>
                                 <span class="close" data-recid="${recid}">×</span>
                             `;
                             
@@ -1392,6 +1417,67 @@
             link.click();
             URL.revokeObjectURL(link.href);
         }
+        
+        // Function to copy the current URL to clipboard
+        function copyLinkToClipboard() {
+            // Get the current URL
+            const currentUrl = window.location.href;
+            
+            // Use the Clipboard API to copy the URL
+            navigator.clipboard.writeText(currentUrl)
+                .then(() => {
+                    // Show a temporary success message
+                    const button = document.getElementById('copy-link');
+                    const originalText = button.innerHTML;
+                    
+                    // Change button text to indicate success
+                    button.innerHTML = `
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="20 6 9 17 4 12"></polyline>
+                        </svg>
+                        Copied!
+                    `;
+                    
+                    // Reset button text after 2 seconds
+                    setTimeout(() => {
+                        button.innerHTML = originalText;
+                    }, 2000);
+                })
+                .catch(err => {
+                    console.error('Failed to copy URL: ', err);
+                    alert('Failed to copy URL to clipboard');
+                });
+        }
+        
+        // Email obfuscation function to prevent spam
+        function openEmail() {
+            // Construct the email address parts to avoid spam bots
+            const user = 'vlvovch';
+            const domain = 'gmail.com';
+            
+            // Create the mailto link dynamically
+            const mailtoLink = 'mailto:' + user + '@' + domain;
+            
+            // Open the email client
+            window.location.href = mailtoLink;
+        }
+        
+        // Set up email tooltip on document load
+        document.addEventListener('DOMContentLoaded', function() {
+            const emailLink = document.getElementById('email-link');
+            
+            // Show email on mouseover
+            emailLink.addEventListener('mouseover', function() {
+                const user = 'vlvovch';
+                const domain = 'gmail.com';
+                emailLink.setAttribute('title', user + '@' + domain);
+            });
+            
+            // Reset title on mouseout
+            emailLink.addEventListener('mouseout', function() {
+                emailLink.setAttribute('title', 'Email me');
+            });
+        });
     </script>
 </body>
 </html>
