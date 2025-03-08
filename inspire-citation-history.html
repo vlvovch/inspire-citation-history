@@ -1,0 +1,938 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    />
+    <title>INSPIRE Citation History</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Add the adapter for date-fns -->
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.xkcd@1.1.13/dist/chart.xkcd.min.js"></script>
+    <style>
+        body {
+            font-family: "Comic Sans MS", "Comic Sans", cursive;
+            margin: 0;
+            padding: 20px;
+            background-color: #f6f8fa;
+            color: #24292e;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: white;
+            border-radius: 6px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+            padding: 20px;
+        }
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .input-container {
+            display: flex;
+            margin-bottom: 20px;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .input-group {
+            flex: 1;
+            min-width: 250px;
+        }
+        input,
+        button {
+            padding: 8px 12px;
+            border: 1px solid #d1d5da;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+        input {
+            width: 100%;
+            box-sizing: border-box;
+        }
+        button {
+            background-color: #2ea44f;
+            color: white;
+            border: none;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        button:hover {
+            background-color: #2c974b;
+        }
+        .chart-container {
+            position: relative;
+            height: 100%;
+            width: 70%;
+            margin: auto auto;
+            background: white;
+            /* padding: 20px 60px; */
+        }
+        
+        #chart {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+        
+        .legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            margin-top: 20px;
+            justify-content: center;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .color-box {
+            width: 15px;
+            height: 15px;
+            border-radius: 3px;
+        }
+        .repo-tag {
+            display: inline-flex;
+            align-items: center;
+            background-color: #f1f8ff;
+            border: 1px solid #c8e1ff;
+            border-radius: 6px;
+            padding: 5px 10px;
+            margin: 5px;
+            font-size: 14px;
+        }
+        .repo-tag .close {
+            margin-left: 8px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 16px;
+        }
+        .repo-list {
+            display: flex;
+            flex-wrap: wrap;
+            margin-bottom: 15px;
+        }
+        .footer {
+            text-align: center;
+            margin-top: 30px;
+            font-size: 14px;
+            color: #6a737d;
+        }
+        .align-checkbox {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            margin-bottom: 10px;
+        }
+        .align-checkbox input[type="checkbox"] {
+            width: auto;
+            margin: 0 5px 0 0;
+            vertical-align: middle;
+        }
+        .align-checkbox label {
+            vertical-align: middle;
+        }
+        .loading {
+            text-align: center;
+            margin: 20px 0;
+            font-style: italic;
+            color: #6a737d;
+        }
+        .debug-info {
+            margin-top: 20px;
+            padding: 10px;
+            background-color: #f6f8fa;
+            border: 1px solid #d1d5da;
+            border-radius: 6px;
+            font-family: monospace;
+            white-space: pre-wrap;
+            max-height: 200px;
+            overflow-y: auto;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>INSPIRE Citation History</h1>
+        
+        <div class="input-container">
+            <div class="input-group">
+                <input type="text" id="recid-input" placeholder="Enter INSPIRE-HEP record id as 2178285 or https://inspirehep.net/literature/2178285" />
+            </div>
+            <button id="add-recid">Add record</button>
+            <button id="view-history">View citation history</button>
+            <button id="clear-all">Clear all</button>
+            <!-- <button id="toggle-debug">Show Debug Info</button> -->
+        </div>
+        
+        <div class="repo-list" id="recid-list"></div>
+        
+        <div class="align-checkbox">
+            <div style="display: flex; align-items: center;">
+                <input type="checkbox" id="align-timeline" />
+                <label for="align-timeline" style="margin-left: 5px;">Align timeline</label>
+            </div>
+        </div>
+        
+        <div id="loading" class="loading" style="display: none;">Loading citation data...</div>
+        
+        <div class="chart-container">
+            <svg id="chart" style="width: 100%; height: 100%; display: block;"></svg>
+        </div>
+        
+        <div class="legend" id="legend-container"></div>
+        
+        <div id="debug-info" class="debug-info"></div>
+        
+        <div class="footer">
+            <p>An analogue of <a href="https://star-history.com" target="_blank">GitHub Star History</a>, developed by <a href="https://github.com/vlvovch" target="_blank">vlvovch</a></p>
+        </div>
+    </div>
+
+    <script>
+        // Override chart.xkcd date formatting
+        document.addEventListener('DOMContentLoaded', function() {
+            if (window.chartXkcd) {
+                // Store the original tooltip formatter
+                const originalTooltipFormatter = chartXkcd.Line.prototype._getTooltipContent;
+                
+                // Override the tooltip formatter to use our custom date format
+                chartXkcd.Line.prototype._getTooltipContent = function(data) {
+                    // Format the date as "Jan 1, 2025"
+                    if (data && data.x) {
+                        const date = new Date(data.x);
+                        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                        const formattedDate = `${months[date.getMonth()]} ${date.getDate()}, ${date.getFullYear()}`;
+                        data.x = formattedDate;
+                    }
+                    // Call the original formatter with our modified data
+                    return originalTooltipFormatter.call(this, data);
+                };
+                
+                // Override the axis label formatter
+                const originalFormatDate = chartXkcd.formatDate;
+                chartXkcd.formatDate = function(date) {
+                    const d = new Date(date);
+                    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                    return `${months[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
+                };
+            }
+        });
+        
+        // --------------------------------
+        // GLOBAL VARIABLES / STATE
+        // --------------------------------
+        const COLORS = [
+            '#e41a1c', '#377eb8', '#4daf4a', '#984ea3', 
+            '#ff7f00', '#ffff33', '#a65628', '#f781bf'
+        ];
+        
+        let recidData = {};   // recid -> { dates: [array of date strings] }
+        let chart = null;     // The single Chart.js instance
+        let debugInfo = [];   // For debug logs
+        
+        // --------------------------------
+        // DEBUG LOGGING
+        // --------------------------------
+        function logDebug(message, data = null) {
+            const timestamp = new Date().toISOString();
+            let logMessage = `[${timestamp}] ${message}`;
+            
+            if (data !== null) {
+                if (typeof data === 'object') {
+                    logMessage += `\n${JSON.stringify(data, null, 2)}`;
+                } else {
+                    logMessage += `\n${data}`;
+                }
+            }
+            
+            console.log(logMessage);
+            debugInfo.push(logMessage);
+            
+            // Update debug info display if visible
+            const debugInfoElement = document.getElementById('debug-info');
+            if (debugInfoElement.style.display !== 'none') {
+                debugInfoElement.textContent = debugInfo.join('\n\n');
+                debugInfoElement.scrollTop = debugInfoElement.scrollHeight;
+            }
+        }
+        
+        function toggleDebugInfo() {
+            const debugInfoElement = document.getElementById('debug-info');
+            const toggleButton = document.getElementById('toggle-debug');
+            
+            if (debugInfoElement.style.display === 'none') {
+                debugInfoElement.style.display = 'block';
+                debugInfoElement.textContent = debugInfo.join('\n\n');
+                toggleButton.textContent = 'Hide Debug Info';
+                debugInfoElement.scrollTop = debugInfoElement.scrollHeight;
+            } else {
+                debugInfoElement.style.display = 'none';
+                toggleButton.textContent = 'Show Debug Info';
+            }
+        }
+        
+        // --------------------------------
+        // URL MANAGEMENT
+        // --------------------------------
+        
+        // Update the URL with the current records
+        function updateUrl() {
+            // Get all recids
+            const recids = Object.keys(recidData);
+            
+            // Create a new URL object
+            const url = new URL(window.location.href);
+            
+            // Update or remove the recids parameter
+            if (recids.length > 0) {
+                // Use dash (-) as separator for cleaner URL
+                url.searchParams.set('recids', recids.join('-'));
+            } else {
+                url.searchParams.delete('recids');
+            }
+            
+            // Update the URL without reloading the page
+            window.history.pushState({}, '', url);
+        }
+        
+        // --------------------------------
+        // FETCHING CITATION DATES
+        // --------------------------------
+        
+        // Helper function to get record information from INSPIRE-HEP API
+        async function get_recid_info(recid) {
+            try {
+                const url = `https://inspirehep.net/api/literature/${recid}`;
+                const response = await fetch(url, {
+                    headers: { "Accept": "application/json" }
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch record info: ${response.statusText}`);
+                }
+                
+                return await response.json();
+            } catch (error) {
+                console.error(`Error fetching data from INSPIRE-HEP API: ${error}`);
+                return null;
+            }
+        }
+        
+        // Format author names and create citation string
+        async function get_recid_string(recid) {
+            const recid_info = await get_recid_info(recid);
+            if (!recid_info) {
+                return ["Unknown", ""];
+            }
+            
+            const metadata = recid_info.metadata || {};
+            const authors = metadata.authors || [];
+            const title = metadata.titles && metadata.titles.length > 0 ? metadata.titles[0].title : "";
+            const journal_info = metadata.publication_info && metadata.publication_info.length > 0 ? metadata.publication_info[0] : {};
+            const journal = journal_info.journal_title || "";
+            const volume = journal_info.journal_volume || "";
+            const page = journal_info.artid || journal_info.page_start || "";
+            const year = journal_info.year || "";
+            var collaboration = "";
+            if (metadata.collaborations && metadata.collaborations.length > 0) {
+                collaboration = metadata.collaborations[0].value || "";
+            }
+            
+            // Format the author names
+            let author_names = [];
+            for (const author of authors) {
+                const full_name = author.full_name ? author.full_name.split(", ")[0] : "";
+                if (full_name) {
+                    author_names.push(full_name);
+                }
+            }
+            
+            // Format author string
+            let author_str;
+            if (collaboration.length > 0) {
+                author_str = collaboration + " Collaboration";
+            } else if (author_names.length > 1) {
+                author_str = author_names[0] + " et al.";
+            } else if (author_names.length === 1) {
+                author_str = author_names[0];
+            } else {
+                author_str = "Unknown Author";
+            }
+            
+            // Format the citation string
+            let citation_str;
+            if (journal) {
+                citation_str = `${author_str}, ${journal} ${volume}, ${page} (${year})`;
+            } else {
+                const eprint = metadata.arxiv_eprints && metadata.arxiv_eprints.length > 0 ? metadata.arxiv_eprints[0].value : "";
+                if (eprint) {
+                    let eprint_year = metadata.preprint_date || "";
+                    if (eprint_year.length !== 4) {
+                        eprint_year = eprint_year.substring(0, 4);
+                    }
+                    citation_str = `${author_str}, ${eprint}`;
+                } else {
+                    let created_year = recid_info.created || "";
+                    if (created_year.length !== 4) {
+                        created_year = created_year.substring(0, 4);
+                    }
+                    citation_str = `${author_str}, (${created_year})`;
+                }
+            }
+            
+            const created_date = recid_info.created || "";
+            const preprint_date = (recid_info.metadata || {}).preprint_date || "";
+            const date = preprint_date ? (created_date < preprint_date ? created_date : preprint_date) : created_date;
+            return [citation_str, date];
+        }
+        
+        // Get citations for a given record ID
+        async function get_citations_by_recid(recid, size = 500, page = 1) {
+            try {
+                const url = `https://inspirehep.net/api/literature?q=refersto:recid:${recid}&size=${size}&page=${page}`;
+                const response = await fetch(url, {
+                    headers: { "Accept": "application/json" }
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch citations: ${response.statusText}`);
+                }
+                
+                return await response.json();
+            } catch (error) {
+                console.error(`Error fetching citations from INSPIRE-HEP API: ${error}`);
+                return null;
+            }
+        }
+        
+        // Parse citation data from API response
+        function parse_citation_data(citation_data) {
+            if (!citation_data || !citation_data.hits) {
+                return [];
+            }
+            
+            const citations = [];
+            for (const hit of citation_data.hits.hits) {
+                const metadata = hit.metadata || {};
+                const citation_info = {
+                    recid: hit.id,
+                    title: metadata.titles && metadata.titles.length > 0 ? metadata.titles[0].title : "",
+                    date: metadata.earliest_date || "",
+                    authors: (metadata.authors || []).map(author => author.full_name || ""),
+                    author_count: (metadata.authors || []).length,
+                    journal: metadata.publication_info && metadata.publication_info.length > 0 ? metadata.publication_info[0].journal_title || "" : "",
+                    volume: metadata.publication_info && metadata.publication_info.length > 0 ? metadata.publication_info[0].journal_volume || "" : "",
+                    page: metadata.publication_info && metadata.publication_info.length > 0 ? metadata.publication_info[0].page_start || "" : "",
+                    doi: metadata.doi || "",
+                    citations_count: metadata.citation_count || 0
+                };
+                
+                const created_date = hit.created || "";
+                
+                // If earliest_date has only year and no month or day, use the created date
+                if (citation_info.date.length === 4 && created_date.substring(0, 4) <= citation_info.date) {
+                    citation_info.date = created_date.substring(0, 10);
+                }
+                
+                // If the date has only year, add month and day
+                if (citation_info.date.length === 4) {
+                    citation_info.date = `${citation_info.date}-01-01`;
+                }
+                
+                citations.push(citation_info);
+            }
+            
+            return citations;
+        }
+        
+        // Get citation data for plotting
+        async function citations_for_plot(recid) {
+            try {
+                let allCitations = [];
+                let page = 1;
+                const pageSize = 200;
+                let totalRecords = 0;
+                let processedRecords = 0;
+                let hasMorePages = true;
+                
+                // First request to get total count and first batch
+                const firstPageData = await get_citations_by_recid(recid, pageSize, page);
+                if (!firstPageData) {
+                    return [];
+                }
+                
+                // Get total number of citations
+                totalRecords = firstPageData.hits.total;
+                
+                // Process first page
+                const firstPageCitations = parse_citation_data(firstPageData);
+                allCitations = [...allCitations, ...firstPageCitations];
+                processedRecords += firstPageCitations.length;
+                
+                // Update loading message
+                const loadingElement = document.getElementById('loading');
+                loadingElement.textContent = `Loading citation data... (${processedRecords}/${totalRecords})`;
+                
+                // Get remaining pages if needed
+                page++;
+                while (processedRecords < totalRecords) {
+                    const nextPageData = await get_citations_by_recid(recid, pageSize, page);
+                    if (!nextPageData || !nextPageData.hits || !nextPageData.hits.hits || nextPageData.hits.hits.length === 0) {
+                        break; // No more results or error
+                    }
+                    
+                    const pageCitations = parse_citation_data(nextPageData);
+                    allCitations = [...allCitations, ...pageCitations];
+                    processedRecords += pageCitations.length;
+                    
+                    // Update loading message
+                    loadingElement.textContent = `Loading citation data... (${processedRecords}/${totalRecords})`;
+                    
+                    page++;
+                    
+                    // Small delay to avoid overwhelming the API
+                    await new Promise(resolve => setTimeout(resolve, 300));
+                }
+                
+                // Get record info for formatting
+                const recid_info = await get_recid_string(recid);
+                
+                // Extract dates from all citations
+                const dates_only = allCitations.map(citation => citation.date || "");
+                
+                return [{
+                    recid: recid,
+                    date: recid_info[1],
+                    refname: recid_info[0],
+                    citation_dates: dates_only,
+                    total_citations: totalRecords
+                }];
+            } catch (error) {
+                console.error(`Failed to retrieve citation data for recid: ${recid}`, error);
+                return [];
+            }
+        }
+        
+        // Main function to fetch citation dates
+        async function fetchCitationDates(recid) {
+            try {
+                document.getElementById('loading').style.display = 'block';
+                
+                // Get citation data directly from INSPIRE-HEP API
+                const result = await citations_for_plot(recid);
+                
+                if (!result || result.length === 0) {
+                    return [];
+                }
+                
+                // Update the URL after successful data fetch
+                updateUrl();
+                
+                return result[0];
+            } catch (error) {
+                alert(`Error fetching citation data for recid ${recid}: ${error.message}`);
+                return [];
+            } finally {
+                document.getElementById('loading').style.display = 'none';
+            }
+        }
+        
+        // --------------------------------
+        // PROCESS CITATION DATA
+        // --------------------------------
+        // Turn an array of raw date strings into a monthly cumulative time series
+        function processCitationData(res, Mode) {
+            if (!res) {
+                return [];
+            }
+            dates = res.citation_dates;
+            if (!dates || dates.length === 0) {
+                return [];
+            }
+            
+            // Sort the date strings
+            dates.sort();
+
+            // We'll accumulate citations month by month from the earliest citation up to now
+            const currentDate = new Date(res.date);
+            
+            // Loop over all dates and accumulate
+            
+            var cumulativeCount = 0;
+            var dataPoints = [];
+
+            // If paper date is before first citation, add it
+            // if (currentDate < new Date(dates[0])) {
+                dataPoints.push({
+                    x: Mode !== 0 ? 0 : currentDate,
+                    y: cumulativeCount
+                });
+            // }
+
+            var maxNumberOfPoints = 20;
+            var diff = dates.length / maxNumberOfPoints;
+            if (diff < 1) {
+                diff = 1;
+            }
+            var monthsNorm = 1000 * 60 * 60 * 24 * 365.25 / 12;
+            var yearsNorm = 1000 * 60 * 60 * 24 * 365.25;
+
+            var useYears = (Mode === 2);
+
+            var nextGoal = cumulativeCount + diff;
+            
+            for (let i = 0; i < dates.length; i++) {
+                var date = new Date(dates[i]);
+                if (date < currentDate) 
+                    date = currentDate;
+                const year = date.getFullYear();
+                const month = date.getMonth();
+                
+                cumulativeCount++;
+                
+                if (cumulativeCount >= nextGoal) {
+                    nextGoal += diff;
+                    
+                    // Add the date to the data points
+                    dataPoints.push({
+                        x: Mode !== 0 ? (Mode === 2 ? Number(((date - currentDate) / yearsNorm).toFixed(2)): Number(((date - currentDate) / monthsNorm).toFixed(1))) : date,
+                        y: cumulativeCount
+                    });
+                }
+            }
+
+            // Add today
+            const today = new Date();
+            dataPoints.push({
+                x: Mode !== 0 ? (Mode === 2 ? Number(((today - currentDate) / yearsNorm).toFixed(2)) : Number(((today - currentDate) / monthsNorm).toFixed(1))) : today,
+                y: cumulativeCount
+            });
+            
+            return dataPoints;
+        }
+        
+        // --------------------------------
+        // CHART UPDATING
+        // --------------------------------
+        function updateChart() {
+            const alignTimeline = document.getElementById('align-timeline').checked;
+            const chartContainer = document.getElementById('chart');
+            
+            // Clear previous chart
+            while (chartContainer.firstChild) {
+                chartContainer.removeChild(chartContainer.firstChild);
+            }
+
+            if (Object.keys(recidData).length === 0) return;
+
+            var Mode = 0;
+            if (alignTimeline) {
+                Mode = 1;
+                for (let i = 0; i < Object.keys(recidData).length; i++) {
+                    const data = recidData[Object.keys(recidData)[i]];
+                    logDebug(data);
+                    datepubl = new Date(data.citation_record.date);
+                    last_citation = new Date(data.citation_record.citation_dates[data.citation_record.citation_dates.length - 1]);
+                    logDebug(last_citation, datepubl);
+                    if (last_citation.getFullYear() - datepubl.getFullYear() > 5) {
+                        Mode = 2;
+                        break;
+                    }
+                }
+            }
+
+            // Process data for all records
+            const allDataPoints = [];
+            Object.entries(recidData).forEach(([recid, data]) => {
+                const points = processCitationData(data.citation_record, Mode);
+                allDataPoints.push({
+                    label: data.citation_record.refname,
+                    points: points
+                });
+            });
+
+            // Create the final data structure
+            const chartData = {
+                datasets: allDataPoints.map((dataset) => ({
+                    label: dataset.label,
+                    data: dataset.points.map(point => ({ x: point.x, y: point.y }))
+                }))
+            };
+
+            try {
+                const config = {
+                    title: 'Citation History',
+                    xLabel: alignTimeline ? (Mode === 2 ? 'Timeline (Years)' : 'Timeline (Months)') : 'Date',
+                    yLabel: 'Citations',
+                    data: chartData,
+                    options: {
+                        xTickCount: 5,
+                        yTickCount: 5,
+                        legendPosition: chartXkcd.config.positionType.upLeft,
+                        showLine: true,
+                        dotSize: 0.5,
+                        dataColors: COLORS,
+                        margin: { left: 120, right: 60, top: 60, bottom: 50 },
+                        strokeWidth: 2.5,
+                        // fontFamily: 'Comic Sans MS',
+                        timeFormat: alignTimeline ? '' : 'MMM D, YYYY'
+                        // backgroundColor: 'white',
+                        // titleFontSize: 24,
+                        // xLabelFontSize: 18,
+                        // yLabelFontSize: 18,
+                        // xTickFontSize: 14,
+                        // yTickFontSize: 14,
+                        // legendFontSize: 14,
+                        // legendPadding: 20,
+                        // legendPosition: 'upLeft'
+                    }
+                };
+
+                // chart = new chartXkcd.Line(chartContainer, config);
+                chart = new chartXkcd.XY(chartContainer, config);
+            } catch (error) {
+                console.error('Error creating chart:', error);
+                console.error('Chart data:', JSON.stringify(chartData, null, 2));
+                alert('Error creating chart: ' + error.message);
+            }
+
+            // Create custom legend in the top-left corner of the chart
+            // const legendContainer = document.getElementById('legend-container');
+            // legendContainer.innerHTML = '';
+            // legendContainer.style.position = 'absolute';
+            // legendContainer.style.top = '10px';
+            // legendContainer.style.left = '10px';
+            // legendContainer.style.padding = '5px';
+            // legendContainer.style.backgroundColor = 'rgba(255, 255, 255, 0.8)';
+            // legendContainer.style.borderRadius = '4px';
+            // legendContainer.style.fontFamily = 'Comic Sans MS';
+            
+            chartData.datasets.forEach((dataset, index) => {
+                const legendItem = document.createElement('div');
+                legendItem.className = 'legend-item';
+                
+                const colorBox = document.createElement('div');
+                colorBox.className = 'color-box';
+                colorBox.style.backgroundColor = COLORS[index % COLORS.length];
+                
+                const label = document.createElement('span');
+                label.textContent = dataset.label;
+                
+                legendItem.appendChild(colorBox);
+                legendItem.appendChild(label);
+                // legendContainer.appendChild(legendItem);
+            });
+        }
+        
+        // --------------------------------
+        // ADD / REMOVE RECID
+        // --------------------------------
+        async function addRecid() {
+            const recidInput = document.getElementById('recid-input');
+            let recidValue = recidInput.value.trim();
+            
+            // Extract recid from URL if it's a URL
+            if (recidValue.includes('inspirehep.net/literature/')) {
+                const match = recidValue.match(/\/literature\/(\d+)/);
+                if (match && match[1]) {
+                    recidValue = match[1];
+                }
+            }
+            
+            // Check if it's a valid number
+            if (!recidValue || !/^\d+$/.test(recidValue)) {
+                alert('Please enter a valid INSPIRE-HEP recid number');
+                return;
+            }
+            
+            const recid = parseInt(recidValue);
+            
+            // Check if this recid is already in the list
+            if (recidData[recid]) {
+                alert('This record is already in the list');
+                return;
+            }
+            
+            // Add to the list
+            recidData[recid] = {
+                citation_record: []
+            };
+            
+            // Update the UI
+            const recidList = document.getElementById('recid-list');
+            const recidTag = document.createElement('div');
+            recidTag.className = 'repo-tag';
+            recidTag.innerHTML = `
+                recid:${recid}
+                <span class="close" data-recid="${recid}">×</span>
+            `;
+            recidList.appendChild(recidTag);
+            
+            // Show loading
+            document.getElementById('loading').style.display = 'block';
+            
+            // Fetch citation data
+            fetchCitationDates(recid)
+                .then(data => {
+                    // Update the data
+                    recidData[recid].citation_record = data;
+                    
+                    // Update the UI
+                    recidTag.innerHTML = `
+                        ${data.refname}
+                        <span class="close" data-recid="${recid}">×</span>
+                    `;
+                    
+                    // Clear the input
+                    recidInput.value = '';
+                    
+                    // Update the chart
+                    updateChart();
+                    
+                    // Update the URL
+                    updateUrl();
+                })
+                .catch(error => {
+                    alert(`Failed to fetch citation data for this recid: ${error.message}`);
+                    
+                    // Remove from UI & data
+                    const recidTags = document.querySelectorAll(`.repo-tag .close[data-recid="${recid}"]`);
+                    recidTags.forEach(tag => tag.parentElement.remove());
+                    delete recidData[recid];
+                })
+                .finally(() => {
+                    // Hide loading
+                    document.getElementById('loading').style.display = 'none';
+                });
+        }
+        
+        function removeRecid(recid) {
+            // Remove from UI
+            const recidTags = document.querySelectorAll(`.repo-tag .close[data-recid="${recid}"]`);
+            recidTags.forEach(tag => tag.parentElement.remove());
+            
+            // Remove from data
+            delete recidData[recid];
+            
+            // Update chart
+            updateChart();
+            
+            // Update URL
+            updateUrl();
+        }
+        
+        function clearAll() {
+            // Clear UI
+            document.getElementById('recid-list').innerHTML = '';
+            
+            // Clear data
+            recidData = {};
+            
+            // Update chart
+            updateChart();
+            
+            // Update URL
+            updateUrl();
+        }
+        
+        // --------------------------------
+        // EVENT LISTENERS
+        // --------------------------------
+        document.getElementById('add-recid').addEventListener('click', addRecid);
+        document.getElementById('view-history').addEventListener('click', updateChart);
+        document.getElementById('clear-all').addEventListener('click', clearAll);
+        document.getElementById('align-timeline').addEventListener('change', updateChart);
+        
+        // Allow pressing Enter in the input field to add a recid
+        document.getElementById('recid-input').addEventListener('keypress', function(event) {
+            if (event.key === 'Enter') {
+                addRecid();
+            }
+        });
+        
+        // Parse URL parameters and add records automatically
+        function parseUrlParams() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const recidsParam = urlParams.get('recids');
+            
+            if (recidsParam) {
+                // Split by dash (-) character
+                const recids = recidsParam.split('-');
+                
+                // Process each recid
+                recids.forEach(async (recidStr) => {
+                    // Clean up the recid
+                    let recid = recidStr.trim();
+                    
+                    // Extract recid from URL if it's a URL
+                    if (recid.includes('inspirehep.net/literature/')) {
+                        const match = recid.match(/\/literature\/(\d+)/);
+                        if (match && match[1]) {
+                            recid = match[1];
+                        }
+                    }
+                    
+                    // Check if it's a valid number
+                    if (/^\d+$/.test(recid)) {
+                        // Add to the list if not already present
+                        if (!recidData[recid]) {
+                            // Add the recid to the list
+                            const recidInt = parseInt(recid);
+                            recidData[recid] = { citation_record: [] };
+                            
+                            // Create a tag for the recid
+                            const recidList = document.getElementById('recid-list');
+                            const recidTag = document.createElement('div');
+                            recidTag.className = 'repo-tag';
+                            recidTag.innerHTML = `
+                                recid:${recid}
+                                <span class="close" data-recid="${recid}">×</span>
+                            `;
+                            recidList.appendChild(recidTag);
+                            
+                            // Fetch citation data
+                            try {
+                                const data = await fetchCitationDates(recidInt);
+                                recidData[recid].citation_record = data;
+                                recidTag.innerHTML = `
+                                    ${data.refname}
+                                    <span class="close" data-recid="${recid}">×</span>
+                                `;
+                            } catch (error) {
+                                console.error(`Failed to fetch citation data for recid ${recid}: ${error.message}`);
+                            }
+
+                            // Update the chart
+                    updateChart();
+                        }
+                    }
+                });
+                
+                // Update the chart if we added any recids
+                if (Object.keys(recidData).length > 0) {
+                    setTimeout(updateChart, 500); // Delay to ensure data is loaded
+                }
+            }
+        }
+        
+        // Initialize the app
+        document.addEventListener('DOMContentLoaded', function() {
+            // Parse URL parameters when the page loads
+            parseUrlParams();
+        });
+        
+        // Remove recid on close button click
+        document.getElementById('recid-list').addEventListener('click', function(e) {
+            if (e.target.classList.contains('close')) {
+                const recid = e.target.getAttribute('data-recid');
+                removeRecid(recid);
+            }
+        });
+    </script>
+</body>
+</html>
