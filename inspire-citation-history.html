@@ -158,6 +158,30 @@
             overflow-y: auto;
             display: none;
         }
+        .export-buttons {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        .export-button {
+            display: inline-flex;
+            align-items: center;
+            background-color: #f1f8ff;
+            border: 1px solid #c8e1ff;
+            border-radius: 6px;
+            padding: 8px 16px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            color: #24292e;
+        }
+        .export-button:hover {
+            background-color: #dbedff;
+        }
+        .export-button svg {
+            margin-right: 8px;
+        }
     </style>
 </head>
 <body>
@@ -190,6 +214,25 @@
         </div>
         
         <div class="legend" id="legend-container"></div>
+        
+        <div class="export-buttons">
+            <button id="save-image" class="export-button">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="7 10 12 15 17 10"></polyline>
+                    <line x1="12" y1="15" x2="12" y2="3"></line>
+                </svg>
+                Image
+            </button>
+            <button id="save-csv" class="export-button">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="7 10 12 15 17 10"></polyline>
+                    <line x1="12" y1="15" x2="12" y2="3"></line>
+                </svg>
+                CSV
+            </button>
+        </div>
         
         <div id="debug-info" class="debug-info"></div>
         
@@ -238,6 +281,7 @@
         
         let recidData = {};   // recid -> { dates: [array of date strings] }
         let chart = null;     // The single Chart.js instance
+        let chartData = null; // Global variable to store chart data for export
         let debugInfo = [];   // For debug logs
         let isLoading = false; // Flag to track loading state
         
@@ -739,12 +783,30 @@
             });
 
             // Create the final data structure
-            const chartData = {
+            // Store in the global chartData variable for export functionality
+            chartData = {
                 datasets: allDataPoints.map((dataset) => ({
                     label: dataset.label,
                     data: dataset.points.map(point => ({ x: point.x, y: point.y }))
-                }))
+                })),
+                labels: [] // Will be populated with unique dates for CSV export
             };
+            
+            // Extract all unique dates for CSV export
+            const allDates = new Set();
+            chartData.datasets.forEach(dataset => {
+                dataset.data.forEach(point => {
+                    allDates.add(point.x);
+                });
+            });
+            
+            // Sort dates chronologically
+            chartData.labels = Array.from(allDates).sort((a, b) => {
+                if (typeof a === 'object' && a instanceof Date && typeof b === 'object' && b instanceof Date) {
+                    return a - b;
+                }
+                return a - b; // For numeric values (when using timeline mode)
+            });
 
             try {
                 const config = {
@@ -943,6 +1005,10 @@
         document.getElementById('view-history').addEventListener('click', updateChart);
         document.getElementById('clear-all').addEventListener('click', clearAll);
         document.getElementById('align-timeline').addEventListener('change', updateChart);
+        
+        // Export button event listeners
+        document.getElementById('save-image').addEventListener('click', saveChartAsImage);
+        document.getElementById('save-csv').addEventListener('click', exportDataToCSV);
         
         // Allow pressing Enter in the input field to add a recid
         document.getElementById('recid-input').addEventListener('keypress', function(event) {
@@ -1180,6 +1246,151 @@
             document.getElementById('view-history').disabled = false;
             document.getElementById('clear-all').disabled = false;
             document.getElementById('recid-input').disabled = false;
+        }
+        
+        // --------------------------------
+        // EXPORT FUNCTIONS
+        // --------------------------------
+        
+        // Function to save chart as image
+        function saveChartAsImage() {
+            const svgElement = document.getElementById('chart');
+            
+            // Create a canvas element with higher resolution
+            const canvas = document.createElement('canvas');
+            const svgRect = svgElement.getBoundingClientRect();
+            const scaleFactor = 2; // Increase resolution by 2x
+            
+            canvas.width = svgRect.width * scaleFactor;
+            canvas.height = svgRect.height * scaleFactor;
+            const ctx = canvas.getContext('2d');
+            
+            // Create an image from the SVG
+            const svgData = new XMLSerializer().serializeToString(svgElement);
+            const img = new Image();
+            const svgBlob = new Blob([svgData], {type: 'image/svg+xml;charset=utf-8'});
+            const url = URL.createObjectURL(svgBlob);
+            
+            img.onload = function() {
+                // Draw the image on the canvas with scaling for higher resolution
+                ctx.fillStyle = 'white';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.scale(scaleFactor, scaleFactor);
+                ctx.drawImage(img, 0, 0);
+                URL.revokeObjectURL(url);
+                
+                // Convert canvas to blob and download
+                canvas.toBlob(function(blob) {
+                    const link = document.createElement('a');
+                    link.download = 'citation-history.png';
+                    link.href = URL.createObjectURL(blob);
+                    link.click();
+                    URL.revokeObjectURL(link.href);
+                }, 'image/png', 1.0); // Use maximum quality
+            };
+            
+            img.src = url;
+        }
+        
+        // Function to export data to CSV
+        function exportDataToCSV() {
+            // Get the data directly from recidData which contains all citation information
+            if (Object.keys(recidData).length === 0) {
+                alert('No data to export');
+                return;
+            }
+            
+            // Create CSV content
+            let csvContent = 'Date';
+            
+            // Add headers for each dataset
+            const recids = Object.keys(recidData);
+            recids.forEach(recid => {
+                let headerText = recid;
+                if (recidData[recid].citation_record && recidData[recid].citation_record.refname) {
+                    headerText = recidData[recid].citation_record.refname;
+                }
+                
+                // Properly escape the header text for CSV
+                // If it contains commas, quotes, or newlines, wrap in quotes and escape any quotes
+                if (headerText.includes(',') || headerText.includes('"') || headerText.includes('\n')) {
+                    // Replace any quotes with double quotes (CSV escaping standard)
+                    headerText = headerText.replace(/"/g, '""');
+                    // Wrap in quotes
+                    headerText = '"' + headerText + '"';
+                }
+                
+                csvContent += ',' + headerText;
+            });
+            csvContent += '\n';
+            
+            // Collect all dates from all datasets
+            const allDatesSet = new Set();
+            recids.forEach(recid => {
+                if (recidData[recid].citation_record && recidData[recid].citation_record.citation_dates) {
+                    // Get publication date
+                    if (recidData[recid].citation_record.date) {
+                        allDatesSet.add(new Date(recidData[recid].citation_record.date));
+                    }
+                    
+                    // Get all citation dates
+                    recidData[recid].citation_record.citation_dates.forEach(dateStr => {
+                        allDatesSet.add(new Date(dateStr));
+                    });
+                    
+                    // Add today's date
+                    allDatesSet.add(new Date());
+                }
+            });
+            
+            // Convert to array and sort chronologically
+            const allDates = Array.from(allDatesSet).sort((a, b) => a - b);
+            
+            // For each date, calculate cumulative citations for each dataset
+            allDates.forEach(date => {
+                // Format date as YYYY-MM-DD
+                const formattedDate = date.toISOString().split('T')[0];
+                csvContent += formattedDate;
+                
+                // For each recid, count citations up to this date
+                recids.forEach(recid => {
+                    if (!recidData[recid].citation_record || !recidData[recid].citation_record.citation_dates) {
+                        csvContent += ',';
+                        return;
+                    }
+                    
+                    // Get publication date
+                    const pubDate = recidData[recid].citation_record.date ? 
+                                   new Date(recidData[recid].citation_record.date) : null;
+                    
+                    // Skip if paper wasn't published yet at this date
+                    if (pubDate && date < pubDate) {
+                        csvContent += ',0';
+                        return;
+                    }
+                    
+                    // Count citations up to this date
+                    let count = 0;
+                    recidData[recid].citation_record.citation_dates.forEach(citeDateStr => {
+                        const citeDate = new Date(citeDateStr);
+                        if (citeDate <= date) {
+                            count++;
+                        }
+                    });
+                    
+                    csvContent += ',' + count;
+                });
+                
+                csvContent += '\n';
+            });
+            
+            // Create and download the CSV file
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = 'citation-history.csv';
+            link.click();
+            URL.revokeObjectURL(link.href);
         }
     </script>
 </body>
