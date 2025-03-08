@@ -62,6 +62,11 @@
         button:hover {
             background-color: #2c974b;
         }
+        button:disabled {
+            background-color: #94d3a2;
+            cursor: not-allowed;
+            opacity: 0.7;
+        }
         .chart-container {
             position: relative;
             height: 100%;
@@ -234,6 +239,7 @@
         let recidData = {};   // recid -> { dates: [array of date strings] }
         let chart = null;     // The single Chart.js instance
         let debugInfo = [];   // For debug logs
+        let isLoading = false; // Flag to track loading state
         
         // --------------------------------
         // DEBUG LOGGING
@@ -451,7 +457,7 @@
         }
         
         // Get citation data for plotting
-        async function citations_for_plot(recid) {
+        async function citations_for_plot(recid, progressCallback) {
             try {
                 let allCitations = [];
                 let page = 1;
@@ -474,9 +480,10 @@
                 allCitations = [...allCitations, ...firstPageCitations];
                 processedRecords += firstPageCitations.length;
                 
-                // Update loading message
-                const loadingElement = document.getElementById('loading');
-                loadingElement.textContent = `Loading citation data... (${processedRecords}/${totalRecords})`;
+                // Update progress if callback provided
+                if (progressCallback) {
+                    progressCallback(processedRecords, totalRecords);
+                }
                 
                 // Get remaining pages if needed
                 page++;
@@ -490,8 +497,10 @@
                     allCitations = [...allCitations, ...pageCitations];
                     processedRecords += pageCitations.length;
                     
-                    // Update loading message
-                    loadingElement.textContent = `Loading citation data... (${processedRecords}/${totalRecords})`;
+                    // Update progress if callback provided
+                    if (progressCallback) {
+                        progressCallback(processedRecords, totalRecords);
+                    }
                     
                     page++;
                     
@@ -521,12 +530,50 @@
         // Main function to fetch citation dates
         async function fetchCitationDates(recid) {
             try {
-                document.getElementById('loading').style.display = 'block';
+                // Show loading indicator with initial message
+                const loadingElement = document.getElementById('loading');
+                loadingElement.textContent = 'Loading citation data...';
+                loadingElement.style.display = 'block';
+                disableButtons();
                 
                 // Get citation data directly from INSPIRE-HEP API
                 const result = await citations_for_plot(recid);
                 
                 if (!result || result.length === 0) {
+                    console.error(`No citation data returned for recid: ${recid}`);
+                    return [];
+                }
+                
+                // Store the data
+                recidData[recid] = { citation_record: result[0] };
+                
+                // Don't update the chart here - it will be updated in addRecid
+                // updateChart();
+                
+                // Update the URL after successful data fetch
+                updateUrl();
+                
+                return result[0];
+            } catch (error) {
+                console.error(`Error fetching citation data for recid ${recid}:`, error);
+                alert(`Error fetching citation data for recid ${recid}: ${error.message}`);
+                return [];
+            } finally {
+                // Hide loading indicator and re-enable buttons
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('loading').textContent = 'Loading...'; // Reset text for next time
+                enableButtons();
+            }
+        }
+        
+        // Version of fetchCitationDates that doesn't manage the loading UI
+        async function fetchCitationDatesWithoutLoadingUI(recid, progressCallback) {
+            try {
+                // Get citation data directly from INSPIRE-HEP API
+                const result = await citations_for_plot(recid, progressCallback);
+                
+                if (!result || result.length === 0) {
+                    console.error(`No citation data returned for recid: ${recid}`);
                     return [];
                 }
                 
@@ -535,10 +582,9 @@
                 
                 return result[0];
             } catch (error) {
+                console.error(`Error fetching citation data for recid ${recid}:`, error);
                 alert(`Error fetching citation data for recid ${recid}: ${error.message}`);
                 return [];
-            } finally {
-                document.getElementById('loading').style.display = 'none';
             }
         }
         
@@ -636,6 +682,13 @@
                 for (let i = 0; i < Object.keys(recidData).length; i++) {
                     const data = recidData[Object.keys(recidData)[i]];
                     logDebug(data);
+                    
+                    // Check if citation_record exists and has the required properties
+                    if (!data.citation_record || !data.citation_record.date || !data.citation_record.citation_dates) {
+                        console.error('Invalid data structure in recidData:', data);
+                        continue;
+                    }
+                    
                     datepubl = new Date(data.citation_record.date);
                     last_citation = new Date(data.citation_record.citation_dates[data.citation_record.citation_dates.length - 1]);
                     logDebug(last_citation, datepubl);
@@ -649,6 +702,12 @@
             // Process data for all records
             const allDataPoints = [];
             Object.entries(recidData).forEach(([recid, data]) => {
+                // Skip invalid data
+                if (!data.citation_record || !data.citation_record.refname) {
+                    console.error(`Missing or invalid citation_record for recid ${recid}`);
+                    return;
+                }
+                
                 const points = processCitationData(data.citation_record, Mode);
                 allDataPoints.push({
                     label: data.citation_record.refname,
@@ -775,16 +834,23 @@
             
             // Show loading
             document.getElementById('loading').style.display = 'block';
+            disableButtons();
             
             // Fetch citation data
             fetchCitationDates(recid)
                 .then(data => {
+                    // Check if data is valid
+                    if (!data || typeof data !== 'object') {
+                        console.error('Invalid data returned from fetchCitationDates:', data);
+                        throw new Error('Failed to fetch citation data');
+                    }
+                    
                     // Update the data
                     recidData[recid].citation_record = data;
                     
-                    // Update the UI
+                    // Update the UI with proper error checking
                     recidTag.innerHTML = `
-                        ${data.refname}
+                        ${data.refname || `recid:${recid}`}
                         <span class="close" data-recid="${recid}">×</span>
                     `;
                     
@@ -798,16 +864,23 @@
                     updateUrl();
                 })
                 .catch(error => {
+                    console.error(`Failed to fetch citation data for recid ${recid}:`, error);
                     alert(`Failed to fetch citation data for this recid: ${error.message}`);
                     
                     // Remove from UI & data
-                    const recidTags = document.querySelectorAll(`.repo-tag .close[data-recid="${recid}"]`);
-                    recidTags.forEach(tag => tag.parentElement.remove());
+                    const recidTags = document.querySelectorAll(`.repo-tag[data-recid="${recid}"], .repo-tag .close[data-recid="${recid}"]`);
+                    recidTags.forEach(tag => {
+                        const element = tag.tagName === 'SPAN' ? tag.parentElement : tag;
+                        if (element && element.parentElement) {
+                            element.parentElement.removeChild(element);
+                        }
+                    });
                     delete recidData[recid];
                 })
                 .finally(() => {
                     // Hide loading
                     document.getElementById('loading').style.display = 'none';
+                    enableButtons();
                 });
         }
         
@@ -856,7 +929,7 @@
         });
         
         // Parse URL parameters and add records automatically
-        function parseUrlParams() {
+        async function parseUrlParams() {
             const urlParams = new URLSearchParams(window.location.search);
             const recidsParam = urlParams.get('recids');
             
@@ -864,8 +937,40 @@
                 // Split by dash (-) character
                 const recids = recidsParam.split('-');
                 
-                // Process each recid
-                recids.forEach(async (recidStr) => {
+                // Show loading indicator once for all recids
+                const loadingElement = document.getElementById('loading');
+                loadingElement.textContent = `Loading records...`;
+                loadingElement.style.display = 'block';
+                disableButtons();
+                
+                // Keep track of completed fetches and progress
+                let completedFetches = 0;
+                const progressMap = {};
+                
+                // Function to update the loading message with detailed progress
+                function updateLoadingMessage() {
+                    // Only include records that are still loading
+                    const progressParts = Object.entries(progressMap)
+                        .filter(([recid, progress]) => !progress.completed)
+                        .map(([recid, progress]) => {
+                            if (progress.total === 0) {
+                                return `${recid}:loading`;
+                            }
+                            return `${recid}:${progress.loaded}/${progress.total}`;
+                        });
+                    
+                    if (progressParts.length === 0) {
+                        loadingElement.textContent = 'All records loaded!';
+                    } else {
+                        loadingElement.textContent = `Loading records... ${progressParts.join(', ')}`;
+                    }
+                }
+                
+                // Process all recids and create their UI elements first
+                const validRecids = [];
+                for (let i = 0; i < recids.length; i++) {
+                    const recidStr = recids[i];
+                    
                     // Clean up the recid
                     let recid = recidStr.trim();
                     
@@ -881,7 +986,12 @@
                     if (/^\d+$/.test(recid)) {
                         // Add to the list if not already present
                         if (!recidData[recid]) {
-                            // Add the recid to the list
+                            validRecids.push(recid);
+                            
+                            // Initialize progress tracking
+                            progressMap[recid] = { loaded: 0, total: 0, completed: false };
+                            
+                            // Add the recid to the data structure
                             const recidInt = parseInt(recid);
                             recidData[recid] = { citation_record: [] };
                             
@@ -895,28 +1005,125 @@
                             `;
                             recidList.appendChild(recidTag);
                             
-                            // Fetch citation data
-                            try {
-                                const data = await fetchCitationDates(recidInt);
-                                recidData[recid].citation_record = data;
-                                recidTag.innerHTML = `
-                                    ${data.refname}
-                                    <span class="close" data-recid="${recid}">×</span>
-                                `;
-                            } catch (error) {
-                                console.error(`Failed to fetch citation data for recid ${recid}: ${error.message}`);
-                            }
-
-                            // Update the chart
-                    updateChart();
+                            // Add event listener to the close button
+                            const closeButton = recidTag.querySelector('.close');
+                            closeButton.addEventListener('click', function() {
+                                removeRecid(recid);
+                            });
                         }
                     }
+                }
+                
+                // Update loading message initially
+                updateLoadingMessage();
+                
+                // If no valid recids, hide loading and return
+                if (validRecids.length === 0) {
+                    loadingElement.style.display = 'none';
+                    enableButtons();
+                    return;
+                }
+                
+                // Create a mutex for chart updates to prevent race conditions
+                const updateChartMutex = {
+                    isUpdating: false,
+                    queue: 0,
+                    async update() {
+                        if (this.isUpdating) {
+                            this.queue++;
+                            return;
+                        }
+                        
+                        this.isUpdating = true;
+                        try {
+                            updateChart();
+                        } finally {
+                            this.isUpdating = false;
+                            if (this.queue > 0) {
+                                this.queue--;
+                                setTimeout(() => this.update(), 50);
+                            }
+                        }
+                    }
+                };
+                
+                // Fetch all records in parallel
+                const fetchPromises = validRecids.map(recid => {
+                    return (async () => {
+                        const recidInt = parseInt(recid);
+                        try {
+                            // Create progress callback for this recid
+                            const progressCallback = (loaded, total) => {
+                                progressMap[recid] = { loaded, total, completed: false };
+                                updateLoadingMessage();
+                            };
+                            
+                            // Fetch data for this recid
+                            const data = await fetchCitationDatesWithoutLoadingUI(recidInt, progressCallback);
+                            
+                            // Update the data
+                            recidData[recid].citation_record = data;
+                            
+                            // Update the tag with the proper name
+                            const recidTag = document.querySelector(`.repo-tag .close[data-recid="${recid}"]`).parentElement;
+                            recidTag.innerHTML = `
+                                ${data.refname || `recid:${recid}`}
+                                <span class="close" data-recid="${recid}">×</span>
+                            `;
+                            
+                            // Add event listener to the close button again
+                            const closeButton = recidTag.querySelector('.close');
+                            closeButton.addEventListener('click', function() {
+                                removeRecid(recid);
+                            });
+                            
+                            // Update the chart after each successful fetch
+                            await updateChartMutex.update();
+                            
+                            // Mark as completed and update loading message
+                            progressMap[recid].completed = true;
+                            updateLoadingMessage();
+                            
+                            // Update completed fetches count
+                            completedFetches++;
+                            
+                            // If all fetches are complete, hide loading after a short delay
+                            if (completedFetches === validRecids.length) {
+                                setTimeout(() => {
+                                    loadingElement.style.display = 'none';
+                                    enableButtons();
+                                }, 1000); // Show "All records loaded!" for 1 second
+                            }
+                            
+                            return true;
+                        } catch (error) {
+                            console.error(`Failed to fetch citation data for recid ${recid}: ${error.message}`);
+                            
+                            // Mark as completed with error
+                            progressMap[recid] = { loaded: 0, total: 0, error: true, completed: true };
+                            updateLoadingMessage();
+                            
+                            // Update completed fetches count
+                            completedFetches++;
+                            
+                            // If all fetches are complete, hide loading after a short delay
+                            if (completedFetches === validRecids.length) {
+                                setTimeout(() => {
+                                    loadingElement.style.display = 'none';
+                                    enableButtons();
+                                }, 1000);
+                            }
+                            
+                            return false;
+                        }
+                    })();
                 });
                 
-                // Update the chart if we added any recids
-                if (Object.keys(recidData).length > 0) {
-                    setTimeout(updateChart, 500); // Delay to ensure data is loaded
-                }
+                // Wait for all fetches to complete
+                await Promise.all(fetchPromises);
+                
+                // Final chart update to ensure everything is displayed correctly
+                updateChart();
             }
         }
         
@@ -933,6 +1140,24 @@
                 removeRecid(recid);
             }
         });
+        
+        // Function to disable all buttons during loading
+        function disableButtons() {
+            isLoading = true;
+            document.getElementById('add-recid').disabled = true;
+            document.getElementById('view-history').disabled = true;
+            document.getElementById('clear-all').disabled = true;
+            document.getElementById('recid-input').disabled = true;
+        }
+        
+        // Function to enable all buttons after loading
+        function enableButtons() {
+            isLoading = false;
+            document.getElementById('add-recid').disabled = false;
+            document.getElementById('view-history').disabled = false;
+            document.getElementById('clear-all').disabled = false;
+            document.getElementById('recid-input').disabled = false;
+        }
     </script>
 </body>
 </html>
