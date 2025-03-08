@@ -339,7 +339,25 @@
             const metadata = recid_info.metadata || {};
             const authors = metadata.authors || [];
             const title = metadata.titles && metadata.titles.length > 0 ? metadata.titles[0].title : "";
-            const journal_info = metadata.publication_info && metadata.publication_info.length > 0 ? metadata.publication_info[0] : {};
+            
+            // Find the first publication_info entry that contains journal information
+            let journal_info = {};
+            if (metadata.publication_info && metadata.publication_info.length > 0) {
+                // Iterate through all publication_info entries
+                for (const info of metadata.publication_info) {
+                    // If this entry has journal_title, use it
+                    if (info.journal_title) {
+                        journal_info = info;
+                        break;
+                    }
+                }
+                
+                // If no entry with journal_title was found, fall back to the first entry
+                if (Object.keys(journal_info).length === 0 && metadata.publication_info.length > 0) {
+                    journal_info = metadata.publication_info[0];
+                }
+            }
+            
             const journal = journal_info.journal_title || "";
             const volume = journal_info.journal_volume || "";
             const page = journal_info.artid || journal_info.page_start || "";
@@ -461,7 +479,7 @@
             try {
                 let allCitations = [];
                 let page = 1;
-                const pageSize = 200;
+                const pageSize = 250;
                 let totalRecords = 0;
                 let processedRecords = 0;
                 let hasMorePages = true;
@@ -536,8 +554,13 @@
                 loadingElement.style.display = 'block';
                 disableButtons();
                 
+                // Define progress callback to update loading message with citation count
+                const progressCallback = (processed, total) => {
+                    loadingElement.textContent = `Loading citation data... (${processed}/${total} citations)`;
+                };
+                
                 // Get citation data directly from INSPIRE-HEP API
-                const result = await citations_for_plot(recid);
+                const result = await citations_for_plot(recid, progressCallback);
                 
                 if (!result || result.length === 0) {
                     console.error(`No citation data returned for recid: ${recid}`);
