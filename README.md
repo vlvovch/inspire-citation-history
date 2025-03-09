@@ -9,8 +9,8 @@ A web-based tool to visualize citation history for academic papers indexed in th
 This project provides a simple, interactive web interface to track and compare citation histories of high-energy physics papers over time. It's inspired by **[GitHub Star History](https://star-history.com)** tool but applied to academic citations.
 
 This is a personal project and is not affiliated with the INSPIRE-HEP database. 
-I do not have much experience with web development, and was interested in learning how to build a web application with the help of AI tools (see [vibe coding](https://en.wikipedia.org/wiki/Vibe_coding)).
-While the AI (Windsurf + Claude Sonnet 3.7) has been immensely helpful, I did have to fix some issues myself.
+I do not have much experience with web development, and was interested in learning how to build a web application with the help of AI tools (it probably counts as [vibe coding](https://en.wikipedia.org/wiki/Vibe_coding)).
+While the AI coding assistant (Windsurf + Claude Sonnet 3.7) has been immensely helpful, I did have to fix some of the issues during the development myself.
 
 ## Features
 
@@ -52,6 +52,17 @@ The application is built as a single HTML file with embedded JavaScript that:
 - Processes the raw citation data into time series format
 - Visualizes the data using the chart.xkcd library for a hand-drawn aesthetic
 
+**Note on Performance**: Due to the limitations of the API, the web application will retrieve up to 250 citation records at a time for each paper. This can cause some delay for large numbers of citations. Please be patient while the charts are loading. Sometimes the process will halt, especially if you are adding many papers at once. There is also rate limiting enforced by INSPIRE API (15 requests per 5 second window)
+
+## Potential Future Improvements
+
+- [ ] Improve performance by caching citation data and/or optimizing API calls
+- [ ] Customize chart appearance (colors, line styles)
+- [ ] Add support for arXiv and/or DOI identifiers
+- [ ] Implement better error handling for API rate limits
+- [ ] Utilizing other citation databases
+
+
 ## Dependencies
 
 - [Chart.js](https://www.chartjs.org/) - Base charting library
@@ -60,10 +71,12 @@ The application is built as a single HTML file with embedded JavaScript that:
 
 ## License
 
-This project is open source and available under the MIT License.
+This project is open source and available under the [MIT License](LICENSE).
 
 ## Acknowledgments
 
 - [INSPIRE-HEP](https://inspirehep.net) for providing the [API to access citation data](https://github.com/inspirehep/rest-api-doc)
 - [GitHub Star History](https://star-history.com) for the inspiration
 - [Windsurf](https://www.jetbrains.com/windsurf/) for the AI-powered coding assistant
+
+*Copyright (C) 2025 Volodymyr Vovchenko*
