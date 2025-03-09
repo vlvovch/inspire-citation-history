@@ -2,7 +2,13 @@
 
 A web-based tool to visualize citation history for academic papers indexed in the INSPIRE-HEP database.
 
-**[Try it online](https://vovchenko.net/inspire-citation-history)**
+<p align="center">
+  <img width="400px" src="img//RHIC-discoveries.png">
+</p>
+
+<p align="center">
+  <a href="https://vovchenko.net/inspire-citation-history/"><strong>Try it online</strong></a>
+</p>
 
 ## Overview
 
