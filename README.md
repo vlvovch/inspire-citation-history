@@ -83,6 +83,6 @@ This project is open source and available under the [MIT License](LICENSE).
 
 - [INSPIRE-HEP](https://inspirehep.net) for providing the [API to access citation data](https://github.com/inspirehep/rest-api-doc)
 - [GitHub Star History](https://star-history.com) for the inspiration
-- [Windsurf](https://www.jetbrains.com/windsurf/) for the AI-powered coding assistant
+- [Windsurf](https://codeium.com/windsurf) by Codeium for the AI-powered coding assistant
 
 *Copyright (C) 2025 Volodymyr Vovchenko*
