@@ -2,36 +2,55 @@
 
 A web-based tool to visualize citation history for academic papers indexed in the INSPIRE-HEP database.
 
+**[Try it online](https://vovchenko.net/inspire-citation-history)**
+
 ## Overview
 
-This project provides a simple, interactive web interface to track and compare citation histories of high-energy physics papers over time. It's inspired by GitHub's star history visualization but applied to academic citations.
+This project provides a simple, interactive web interface to track and compare citation histories of high-energy physics papers over time. It's inspired by **[GitHub Star History](https://star-history.com)** tool but applied to academic citations.
+
+This is a personal project and is not affiliated with the INSPIRE-HEP database. 
+I do not have much experience with web development, and was interested in learning how to build a web application with the help of AI tools (see [vibe coding](https://en.wikipedia.org/wiki/Vibe_coding)).
+While the AI (Windsurf + Claude Sonnet 3.7) has been immensely helpful, I did have to fix some issues myself.
 
 ## Features
 
 - Track citation history for multiple papers simultaneously
 - Compare citation trajectories across different papers
 - Option to align timelines to normalize publication dates
-- Direct integration with the INSPIRE-HEP API
-- Support for INSPIRE-HEP record IDs and URLs
+- Read multiple INSPIRE-HEP record IDs through URL
+- Export the graph to a file
 
 ## Usage
 
-1. Open `inspire-citation-history.html` in your web browser
+1. Visit [https://vovchenko.net/inspire-citation-history](https://vovchenko.net/inspire-citation-history) or open `inspire-citation-history.html` locally in your web browser
 2. Enter an INSPIRE-HEP record ID in the input field (e.g., `2178285`) or paste a full INSPIRE-HEP URL (e.g., `https://inspirehep.net/literature/2178285`)
 3. Click "Add record" to add the paper to your visualization
 4. Add multiple papers to compare citation histories
 5. Toggle "Align timeline" to normalize all citation histories to start at the same point
-6. Click "View citation history" to update the chart
-7. Click "Clear all" to remove all records and reset the chart
+6. Click "Clear all" to remove all records and reset the chart
+
+### Alternative Usage: URL Parameters
+
+You can also directly share specific citation histories by using URL parameters, for example: [https://vovchenko.net/inspire-citation-history/?recids=1850675-1914564](https://vovchenko.net/inspire-citation-history/?recids=1850675-1914564)
+
+### Example Queries
+
+Here are some example queries for interesting paper comparisons:
+
+- **RHIC QGP Assesment Papers**: [?recids=661031-661961-662061-674863](https://vovchenko.net/inspire-citation-history/?recids=661031-661961-662061-674863)
+
+![RHIC Discoveries](img/RHIC-discoveries.png)
+- **Compare STAR measurements of proton cumulants and CME (aligned timelines)**: [?recids=1850675-1914564&align=true](https://vovchenko.net/inspire-citation-history/?recids=1850675-1914564&align=true)
+
+![STAR cumulants vs CME](img/STAR-cumulants-vs-CME.png)
 
 ## Technical Details
 
 The application is built as a single HTML file with embedded JavaScript that:
 
-- Makes API calls to the INSPIRE-HEP database to retrieve citation data
+- Makes API calls to the [INSPIRE-HEP REST API](https://github.com/inspirehep/rest-api-doc) to retrieve citation data
 - Processes the raw citation data into time series format
 - Visualizes the data using the chart.xkcd library for a hand-drawn aesthetic
-- Maintains state in the URL for easy sharing of visualizations
 
 ## Dependencies
 
@@ -45,5 +64,6 @@ This project is open source and available under the MIT License.
 
 ## Acknowledgments
 
-- INSPIRE-HEP for providing the API to access citation data
+- [INSPIRE-HEP](https://inspirehep.net) for providing the [API to access citation data](https://github.com/inspirehep/rest-api-doc)
 - [GitHub Star History](https://star-history.com) for the inspiration
+- [Windsurf](https://www.jetbrains.com/windsurf/) for the AI-powered coding assistant

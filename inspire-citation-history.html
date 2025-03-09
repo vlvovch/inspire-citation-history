@@ -202,7 +202,6 @@
                 <input type="text" id="recid-input" placeholder="Enter INSPIRE-HEP record id as 2178285 or https://inspirehep.net/literature/2178285" />
             </div>
             <button id="add-recid">Add record</button>
-            <button id="view-history">View citation history</button>
             <button id="clear-all">Clear all</button>
             <!-- <button id="toggle-debug">Show Debug Info</button> -->
         </div>
@@ -366,8 +365,18 @@
             if (recids.length > 0) {
                 // Use dash (-) as separator for cleaner URL
                 url.searchParams.set('recids', recids.join('-'));
+                
+                // Add align parameter if checked
+                const alignCheckbox = document.getElementById('align-timeline');
+                if (alignCheckbox.checked) {
+                    url.searchParams.set('align', 'true');
+                } else {
+                    url.searchParams.delete('align');
+                }
             } else {
+                // Remove all parameters if no records
                 url.searchParams.delete('recids');
+                url.searchParams.delete('align');
             }
             
             // Update the URL without reloading the page
@@ -1026,9 +1035,12 @@
         // EVENT LISTENERS
         // --------------------------------
         document.getElementById('add-recid').addEventListener('click', addRecid);
-        document.getElementById('view-history').addEventListener('click', updateChart);
+
         document.getElementById('clear-all').addEventListener('click', clearAll);
-        document.getElementById('align-timeline').addEventListener('change', updateChart);
+        document.getElementById('align-timeline').addEventListener('change', function() {
+            updateChart();
+            updateUrl();
+        });
         
         // Export button event listeners
         document.getElementById('save-image').addEventListener('click', saveChartAsImage);
@@ -1046,6 +1058,13 @@
         async function parseUrlParams() {
             const urlParams = new URLSearchParams(window.location.search);
             const recidsParam = urlParams.get('recids');
+            const alignParam = urlParams.get('align');
+            
+            // Handle the align parameter
+            if (alignParam !== null) {
+                const alignCheckbox = document.getElementById('align-timeline');
+                alignCheckbox.checked = alignParam.toLowerCase() === 'true';
+            }
             
             if (recidsParam) {
                 // Split by dash (-) character
@@ -1259,7 +1278,7 @@
         function disableButtons() {
             isLoading = true;
             document.getElementById('add-recid').disabled = true;
-            document.getElementById('view-history').disabled = true;
+
             document.getElementById('clear-all').disabled = true;
             document.getElementById('recid-input').disabled = true;
         }
@@ -1268,7 +1287,7 @@
         function enableButtons() {
             isLoading = false;
             document.getElementById('add-recid').disabled = false;
-            document.getElementById('view-history').disabled = false;
+
             document.getElementById('clear-all').disabled = false;
             document.getElementById('recid-input').disabled = false;
         }
