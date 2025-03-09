@@ -3,7 +3,7 @@
 A web-based tool to visualize citation history for academic papers indexed in the INSPIRE-HEP database.
 
 <p align="center">
-  <img width="400px" src="img//RHIC-discoveries.png">
+  <img width="500px" src="img//RHIC-discoveries.png">
 </p>
 
 <p align="center">
