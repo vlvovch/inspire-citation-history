@@ -89,23 +89,6 @@
             display: block;
         }
         
-        .legend {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 15px;
-            margin-top: 20px;
-            justify-content: center;
-        }
-        .legend-item {
-            display: flex;
-            align-items: center;
-            gap: 5px;
-        }
-        .color-box {
-            width: 15px;
-            height: 15px;
-            border-radius: 3px;
-        }
         .repo-tag {
             display: inline-flex;
             align-items: center;
@@ -245,8 +228,6 @@
             <canvas id="rate-chart" style="display: none;"></canvas>
         </div>
         
-        <div class="legend" id="legend-container"></div>
-        
         <div class="export-buttons">
             <button id="save-image" class="export-button">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -289,35 +270,6 @@
     </div>
 
     <script>
-        // Override chart.xkcd date formatting
-        document.addEventListener('DOMContentLoaded', function() {
-            if (window.chartXkcd) {
-                // Store the original tooltip formatter
-                const originalTooltipFormatter = chartXkcd.Line.prototype._getTooltipContent;
-                
-                // Override the tooltip formatter to use our custom date format
-                chartXkcd.Line.prototype._getTooltipContent = function(data) {
-                    // Format the date as "Jan 1, 2025"
-                    if (data && data.x) {
-                        const date = new Date(data.x);
-                        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-                        const formattedDate = `${months[date.getMonth()]} ${date.getDate()}, ${date.getFullYear()}`;
-                        data.x = formattedDate;
-                    }
-                    // Call the original formatter with our modified data
-                    return originalTooltipFormatter.call(this, data);
-                };
-                
-                // Override the axis label formatter
-                const originalFormatDate = chartXkcd.formatDate;
-                chartXkcd.formatDate = function(date) {
-                    const d = new Date(date);
-                    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-                    return `${months[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
-                };
-            }
-        });
-        
         // --------------------------------
         // GLOBAL VARIABLES / STATE
         // --------------------------------
@@ -802,7 +754,7 @@
             if (!res) {
                 return [];
             }
-            dates = res.citation_dates;
+            const dates = res.citation_dates;
             if (!dates || dates.length === 0) {
                 return [];
             }
@@ -840,11 +792,9 @@
             
             for (let i = 0; i < dates.length; i++) {
                 var date = new Date(dates[i]);
-                if (date < currentDate) 
+                if (date < currentDate)
                     date = currentDate;
-                const year = date.getFullYear();
-                const month = date.getMonth();
-                
+
                 cumulativeCount++;
                 
                 if (cumulativeCount >= nextGoal) {
@@ -1094,8 +1044,8 @@
                         continue;
                     }
                     
-                    datepubl = new Date(data.citation_record.date);
-                    last_citation = new Date(data.citation_record.citation_dates[data.citation_record.citation_dates.length - 1]);
+                    const datepubl = new Date(data.citation_record.date);
+                    const last_citation = new Date(data.citation_record.citation_dates[data.citation_record.citation_dates.length - 1]);
                     logDebug(last_citation, datepubl);
                     if (last_citation.getFullYear() - datepubl.getFullYear() > 5) {
                         Mode = 2;
@@ -1125,31 +1075,15 @@
                 });
             });
 
-            // Create the final data structure
-            // Store in the global chartData variable for export functionality
+            // Assemble the chart data (the CSV export recomputes from the
+            // raw citation dates, so no labels are needed here)
             chartData = {
                 datasets: allDataPoints.map((dataset) => ({
                     label: dataset.label,
                     data: dataset.points.map(point => ({ x: point.x, y: point.y }))
                 })),
-                labels: [] // Will be populated with unique dates for CSV export
+                labels: []
             };
-            
-            // Extract all unique dates for CSV export
-            const allDates = new Set();
-            chartData.datasets.forEach(dataset => {
-                dataset.data.forEach(point => {
-                    allDates.add(point.x);
-                });
-            });
-            
-            // Sort dates chronologically
-            chartData.labels = Array.from(allDates).sort((a, b) => {
-                if (typeof a === 'object' && a instanceof Date && typeof b === 'object' && b instanceof Date) {
-                    return a - b;
-                }
-                return a - b; // For numeric values (when using timeline mode)
-            });
 
             try {
                 const config = {
@@ -1188,32 +1122,6 @@
                 alert('Error creating chart: ' + error.message);
             }
 
-            // Create custom legend in the top-left corner of the chart
-            // const legendContainer = document.getElementById('legend-container');
-            // legendContainer.innerHTML = '';
-            // legendContainer.style.position = 'absolute';
-            // legendContainer.style.top = '10px';
-            // legendContainer.style.left = '10px';
-            // legendContainer.style.padding = '5px';
-            // legendContainer.style.backgroundColor = 'rgba(255, 255, 255, 0.8)';
-            // legendContainer.style.borderRadius = '4px';
-            // legendContainer.style.fontFamily = 'Comic Sans MS';
-            
-            chartData.datasets.forEach((dataset, index) => {
-                const legendItem = document.createElement('div');
-                legendItem.className = 'legend-item';
-                
-                const colorBox = document.createElement('div');
-                colorBox.className = 'color-box';
-                colorBox.style.backgroundColor = COLORS[index % COLORS.length];
-                
-                const label = document.createElement('span');
-                label.textContent = dataset.label;
-                
-                legendItem.appendChild(colorBox);
-                legendItem.appendChild(label);
-                // legendContainer.appendChild(legendItem);
-            });
         }
 
         // Present-rate annotation: a small "value ± err" label in the series
