@@ -22,7 +22,7 @@ While the AI coding assistant (Windsurf + Claude Sonnet 3.7) has been immensely 
 
 - Track citation history for multiple papers simultaneously
 - Compare citation trajectories across different papers
-- Citation rate view: time-dependent citation rate (citations/month) with 68% uncertainty bands, treating citations as an inhomogeneous Poisson process
+- Citation rate view: time-dependent citation rate (citations/month) with 68% uncertainty bands, treating citations as an inhomogeneous Poisson process. Smooth (boundary-corrected Gaussian kernel) estimate by default, with an optional binned histogram
 - Option to align timelines to normalize publication dates
 - Read multiple INSPIRE-HEP record IDs through URL
 - Export the graph to a file
@@ -34,16 +34,16 @@ While the AI coding assistant (Windsurf + Claude Sonnet 3.7) has been immensely 
 3. Click "Add record" to add the paper to your visualization
 4. Add multiple papers to compare citation histories
 5. Toggle "Align timeline" to normalize all citation histories to start at the same point
-6. Toggle "Citation rate" to switch from the cumulative citation count to the citation rate per month, shown with 68% Poisson uncertainty bands. The bin width is chosen automatically and can be overridden. The last bin is drawn dashed/open since it is still filling up (and recent citations may not be indexed yet)
+6. Toggle "Citation rate" to switch from the cumulative citation count to the citation rate per month, shown with 68% Poisson uncertainty bands. By default the rate is a smooth kernel estimate; uncheck "Smooth" for a binned histogram instead. The smoothing scale / bin width is chosen automatically and can be overridden. The part of the curve near the present is drawn dashed since recent citations may not be indexed yet
 7. Click "Clear all" to remove all records and reset the chart
 
-In the rate view, the CSV export contains the binned rate series (rate, 68% interval bounds, and citation count per bin) instead of the cumulative counts.
+In the rate view, the CSV export contains the rate series (rate, 68% interval bounds, and the per-point citation count or effective count) instead of the cumulative counts.
 
 ### Alternative Usage: URL Parameters
 
 You can also directly share specific citation histories by using URL parameters, for example: [https://vovchenko.net/inspire-citation-history/?recids=1850675-1914564](https://vovchenko.net/inspire-citation-history/?recids=1850675-1914564)
 
-Supported parameters: `recids` (dash-separated record IDs), `align=true` (align timelines), `rate=true` (citation rate view), and `bin` (rate bin width in months: 1, 3, 6, or 12; omit for automatic)
+Supported parameters: `recids` (dash-separated record IDs), `align=true` (align timelines), `rate=true` (citation rate view), `smooth=false` (binned instead of smooth rate), and `bin` (smoothing scale / bin width in months: 1, 3, 6, or 12; omit for automatic)
 
 ### Example Queries
 

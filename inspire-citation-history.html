@@ -218,8 +218,12 @@
                 <input type="checkbox" id="show-rate" />
                 <label for="show-rate" style="margin-left: 5px;">Citation rate</label>
             </div>
+            <div id="smooth-group" style="display: none; align-items: center; margin-right: 20px;">
+                <input type="checkbox" id="smooth-rate" checked />
+                <label for="smooth-rate" style="margin-left: 5px;">Smooth</label>
+            </div>
             <div id="bin-width-group" style="display: none; align-items: center; margin-right: 20px;">
-                <label for="bin-width" style="margin-right: 5px;">Bin width:</label>
+                <label for="bin-width" id="bin-width-label" style="margin-right: 5px;">Smoothing:</label>
                 <select id="bin-width">
                     <option value="">Auto</option>
                     <option value="1">1 month</option>
@@ -405,9 +409,16 @@
                     } else {
                         url.searchParams.delete('bin');
                     }
+                    // Smooth is the default; only record opting out
+                    if (!document.getElementById('smooth-rate').checked) {
+                        url.searchParams.set('smooth', 'false');
+                    } else {
+                        url.searchParams.delete('smooth');
+                    }
                 } else {
                     url.searchParams.delete('rate');
                     url.searchParams.delete('bin');
+                    url.searchParams.delete('smooth');
                 }
             } else {
                 // Remove all parameters if no records
@@ -415,6 +426,7 @@
                 url.searchParams.delete('align');
                 url.searchParams.delete('rate');
                 url.searchParams.delete('bin');
+                url.searchParams.delete('smooth');
             }
             
             // Update the URL without reloading the page
@@ -807,14 +819,57 @@
         // The rate is estimated as a piecewise-constant MLE (binned counts / bin width)
         // with 68% central Poisson intervals per bin.
 
-        // 68% central Poisson interval for a count n, via the Wilson-Hilferty
+        const MS_PER_MONTH = 1000 * 60 * 60 * 24 * 365.25 / 12;
+
+        // 68% central Poisson interval for a count n (may be fractional, for
+        // the smooth estimator's effective counts), via the Wilson-Hilferty
         // approximation to the exact (Garwood) chi-squared interval.
         function poissonInterval68(n) {
             const z = 1.0; // 68.27% central interval
-            const lo = n === 0 ? 0 :
-                n * Math.pow(1 - 1 / (9 * n) - z / (3 * Math.sqrt(n)), 3);
+            const lo = n <= 0 ? 0 :
+                Math.max(0, n * Math.pow(1 - 1 / (9 * n) - z / (3 * Math.sqrt(n)), 3));
             const hi = (n + 1) * Math.pow(1 - 1 / (9 * (n + 1)) + z / (3 * Math.sqrt(n + 1)), 3);
             return [lo, hi];
+        }
+
+        // Error function (Abramowitz & Stegun 7.1.26, |error| < 1.5e-7)
+        function erf(x) {
+            const sign = x < 0 ? -1 : 1;
+            const ax = Math.abs(x);
+            const t = 1 / (1 + 0.3275911 * ax);
+            const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t
+                - 0.284496736) * t + 0.254829592) * t * Math.exp(-ax * ax);
+            return sign * y;
+        }
+
+        function normCdf(x) {
+            return 0.5 * (1 + erf(x / Math.SQRT2));
+        }
+
+        // Publication date, months of history, and citation month-offsets
+        // (clamped to [0, spanMonths]); null if the record has no history yet.
+        function getCitationOffsets(record, nowMs) {
+            const pubDate = new Date(record.date);
+            const now = nowMs ? new Date(nowMs) : new Date();
+            const spanMonths = (now - pubDate) / MS_PER_MONTH;
+            if (!(spanMonths > 0)) return null;
+            const offsets = [];
+            for (const dateStr of (record.citation_dates || [])) {
+                const d = new Date(dateStr);
+                if (isNaN(d)) continue;
+                let m = (d - pubDate) / MS_PER_MONTH;
+                if (m < 0) m = 0;
+                if (m > spanMonths) m = spanMonths;
+                offsets.push(m);
+            }
+            return { pubDate: pubDate, spanMonths: spanMonths, offsets: offsets };
+        }
+
+        // x coordinate for a point midMonths after publication, per axis mode
+        function rateXValue(pubDate, midMonths, Mode) {
+            return Mode !== 0 ?
+                (Mode === 2 ? Number((midMonths / 12).toFixed(3)) : Number(midMonths.toFixed(2))) :
+                new Date(pubDate.getTime() + midMonths * MS_PER_MONTH);
         }
 
         // Pick a bin width (in average months): the finest of 1/2/3/6/12/24 months
@@ -836,24 +891,13 @@
         // Mode 1, years in Mode 2), y/lo/hi in citations per month, the bin
         // count n, and a partial flag on the current (incomplete) bin.
         function computeRateSeries(record, Mode, binMonthsOverride, nowMs) {
-            const MS_PER_MONTH = 1000 * 60 * 60 * 24 * 365.25 / 12;
-            const pubDate = new Date(record.date);
-            const now = nowMs ? new Date(nowMs) : new Date();
-            const spanMonths = (now - pubDate) / MS_PER_MONTH;
-            if (!(spanMonths > 0)) {
+            const base = getCitationOffsets(record, nowMs);
+            if (!base) {
                 return { points: [], binMonths: 1 };
             }
-
-            // Month offsets of the citations, clamped to [0, spanMonths]
-            const offsets = [];
-            for (const dateStr of (record.citation_dates || [])) {
-                const d = new Date(dateStr);
-                if (isNaN(d)) continue;
-                let m = (d - pubDate) / MS_PER_MONTH;
-                if (m < 0) m = 0;
-                if (m > spanMonths) m = spanMonths;
-                offsets.push(m);
-            }
+            const pubDate = base.pubDate;
+            const spanMonths = base.spanMonths;
+            const offsets = base.offsets;
 
             const binMonths = binMonthsOverride > 0 ? binMonthsOverride :
                 chooseBinWidthMonths(offsets.length, spanMonths);
@@ -874,11 +918,8 @@
                 const mid = (start + end) / 2;
                 const n = counts[k];
                 const interval = poissonInterval68(n);
-                const x = Mode !== 0 ?
-                    (Mode === 2 ? Number((mid / 12).toFixed(3)) : Number(mid.toFixed(2))) :
-                    new Date(pubDate.getTime() + mid * MS_PER_MONTH);
                 points.push({
-                    x: x,
+                    x: rateXValue(pubDate, mid, Mode),
                     y: n / width,
                     lo: interval[0] / width,
                     hi: interval[1] / width,
@@ -887,6 +928,62 @@
                 });
             }
             return { points: points, binMonths: binMonths };
+        }
+
+        // Smooth rate estimate: Gaussian-kernel intensity estimator with
+        // cut-and-normalize boundary correction,
+        //   lambda(t) = sum_i K_h(t - t_i) / m(t),   m(t) = int_0^T K_h(t - u) du.
+        // For a Poisson process Var(lambda) = lambda * int K^2 / m^2 (Campbell's
+        // theorem), i.e. lambda behaves like a Poisson count over an effective
+        // exposure E0(t) = m(t)^2 / int_0^T K_h(t-u)^2 du months. The band maps
+        // n_eff = lambda * E0 through the same 68% Poisson interval as the bins,
+        // which stays positive and asymmetric at low rates and widens by ~sqrt(2)
+        // at the window edges.
+        function computeSmoothRateSeries(record, Mode, fwhmOverride, nowMs) {
+            const base = getCitationOffsets(record, nowMs);
+            if (!base) {
+                return { points: [], widthMonths: 6 };
+            }
+            const pubDate = base.pubDate;
+            const T = base.spanMonths;
+            const offsets = base.offsets;
+
+            // Smoothing scale expressed as a FWHM, comparable to a bin width;
+            // auto: twice the auto bin width, at least half a year.
+            const autoBin = chooseBinWidthMonths(offsets.length, T);
+            const fwhm = fwhmOverride > 0 ? fwhmOverride : Math.max(2 * autoBin, 6);
+            const h = fwhm / 2.3548; // Gaussian sigma in months
+
+            const nGrid = Math.max(120, Math.min(400, Math.ceil((T / h) * 4)));
+            const norm = 1 / (h * Math.sqrt(2 * Math.PI));
+            const points = [];
+            for (let g = 0; g <= nGrid; g++) {
+                const t = T * g / nGrid;
+                const mass = normCdf((T - t) / h) - normCdf(-t / h);
+                if (mass <= 1e-12) continue;
+                const kernelSqInt = (normCdf(Math.SQRT2 * (T - t) / h) - normCdf(-Math.SQRT2 * t / h)) /
+                    (2 * h * Math.sqrt(Math.PI));
+                let sum = 0;
+                for (const m of offsets) {
+                    const u = (t - m) / h;
+                    if (u < -6 || u > 6) continue;
+                    sum += norm * Math.exp(-0.5 * u * u);
+                }
+                const rate = sum / mass;
+                const exposure = mass * mass / kernelSqInt; // effective months
+                const nEff = rate * exposure;
+                const interval = poissonInterval68(nEff);
+                points.push({
+                    x: rateXValue(pubDate, t, Mode),
+                    y: rate,
+                    lo: interval[0] / exposure,
+                    hi: interval[1] / exposure,
+                    n: Math.round(nEff * 10) / 10,
+                    partial: t > T - h, // within one sigma of now: indexing lag
+                    smooth: true
+                });
+            }
+            return { points: points, widthMonths: fwhm };
         }
 
         function hexToRgba(hex, alpha) {
@@ -905,8 +1002,12 @@
             const chartContainer = document.getElementById('chart');
             const rateCanvas = document.getElementById('rate-chart');
 
-            // Show the bin-width selector only in rate view
+            // Show the rate controls only in rate view; the width selector acts
+            // as smoothing scale (FWHM) in smooth mode and bin width otherwise
+            document.getElementById('smooth-group').style.display = showRate ? 'flex' : 'none';
             document.getElementById('bin-width-group').style.display = showRate ? 'flex' : 'none';
+            document.getElementById('bin-width-label').textContent =
+                document.getElementById('smooth-rate').checked ? 'Smoothing:' : 'Bin width:';
 
             // Clear previous charts (both views)
             while (chartContainer.firstChild) {
@@ -1067,6 +1168,7 @@
             }
 
             const binOverride = parseInt(document.getElementById('bin-width').value) || 0;
+            const smoothRate = document.getElementById('smooth-rate').checked;
             Chart.defaults.font.family = '"Comic Sans MS", "Comic Sans", cursive';
 
             const datasets = [];
@@ -1079,31 +1181,36 @@
                     return;
                 }
 
-                const series = computeRateSeries(record, Mode, binOverride);
+                const series = smoothRate ?
+                    computeSmoothRateSeries(record, Mode, binOverride) :
+                    computeRateSeries(record, Mode, binOverride);
                 if (series.points.length === 0) return;
 
                 const color = COLORS[colorIndex % COLORS.length];
                 colorIndex++;
                 const points = series.points;
+                const stepStyle = smoothRate ? false : 'middle';
                 rateData.push({
                     recid: recid,
                     label: record.refname,
-                    binMonths: series.binMonths,
+                    estimator: smoothRate ? 'smooth' : 'binned',
+                    widthMonths: smoothRate ? series.widthMonths : series.binMonths,
                     points: points
                 });
 
-                // Central estimate; the current (incomplete) bin is drawn dashed
-                // with an open marker.
+                // Central estimate; the provisional part near the present
+                // (incomplete current bin / last sigma) is drawn dashed.
                 datasets.push({
                     label: record.refname,
                     data: points,
                     borderColor: color,
                     backgroundColor: color,
-                    stepped: 'middle',
+                    stepped: stepStyle,
+                    tension: 0,
                     borderWidth: 2.5,
-                    pointRadius: 2.5,
-                    pointHoverRadius: 4,
-                    pointHitRadius: 10,
+                    pointRadius: smoothRate ? 0 : 2.5,
+                    pointHoverRadius: smoothRate ? 3 : 4,
+                    pointHitRadius: smoothRate ? 6 : 10,
                     pointBackgroundColor: (ctx) =>
                         points[ctx.dataIndex] && points[ctx.dataIndex].partial ? '#ffffff' : color,
                     segment: {
@@ -1118,7 +1225,8 @@
                     borderWidth: 0,
                     pointRadius: 0,
                     pointHitRadius: 0,
-                    stepped: 'middle',
+                    stepped: stepStyle,
+                    tension: 0,
                     backgroundColor: 'transparent'
                 });
                 datasets.push({
@@ -1127,7 +1235,8 @@
                     borderWidth: 0,
                     pointRadius: 0,
                     pointHitRadius: 0,
-                    stepped: 'middle',
+                    stepped: stepStyle,
+                    tension: 0,
                     fill: '-1',
                     backgroundColor: hexToRgba(color, 0.18)
                 });
@@ -1174,10 +1283,12 @@
                             callbacks: {
                                 label: (ctx) => {
                                     const p = ctx.raw;
+                                    const nText = p.smooth ? `n_eff≈${p.n}` : `n=${p.n}`;
                                     let text = `${ctx.dataset.label}: ${p.y.toFixed(2)} citations/month` +
-                                        ` (n=${p.n}, 68% CL [${p.lo.toFixed(2)}, ${p.hi.toFixed(2)}])`;
+                                        ` (${nText}, 68% CL [${p.lo.toFixed(2)}, ${p.hi.toFixed(2)}])`;
                                     if (p.partial) {
-                                        text += ' — current bin, may be incomplete';
+                                        text += p.smooth ? ' — near present, may be incomplete'
+                                            : ' — current bin, may be incomplete';
                                     }
                                     return text;
                                 }
@@ -1334,6 +1445,10 @@
             updateChart();
             updateUrl();
         });
+        document.getElementById('smooth-rate').addEventListener('change', function() {
+            updateChart();
+            updateUrl();
+        });
         document.getElementById('bin-width').addEventListener('change', function() {
             updateChart();
             updateUrl();
@@ -1371,6 +1486,10 @@
             const binParam = parseInt(urlParams.get('bin'));
             if ([1, 3, 6, 12].includes(binParam)) {
                 document.getElementById('bin-width').value = String(binParam);
+            }
+            const smoothParam = urlParams.get('smooth');
+            if (smoothParam !== null) {
+                document.getElementById('smooth-rate').checked = smoothParam.toLowerCase() !== 'false';
             }
             
             if (recidsParam) {
@@ -1673,13 +1792,17 @@
                 return value;
             };
 
-            let csvContent = 'Paper,BinWidthMonths,X,CitationsPerMonth,ErrLow68,ErrHigh68,NCitations,CurrentBin\n';
+            // N is the bin count for the binned estimator and the effective
+            // count n_eff for the smooth one; WidthMonths is the bin width or
+            // the smoothing FWHM respectively.
+            let csvContent = 'Paper,Estimator,WidthMonths,X,CitationsPerMonth,ErrLow68,ErrHigh68,N,Provisional\n';
             rateData.forEach(series => {
                 series.points.forEach(p => {
                     const xValue = p.x instanceof Date ? p.x.toISOString().split('T')[0] : p.x;
                     csvContent += [
                         escapeCSV(series.label),
-                        series.binMonths,
+                        series.estimator,
+                        series.widthMonths,
                         xValue,
                         p.y.toFixed(4),
                         p.lo.toFixed(4),
