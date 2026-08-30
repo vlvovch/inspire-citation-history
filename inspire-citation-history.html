@@ -204,7 +204,7 @@
         
         <div class="input-container">
             <div class="input-group">
-                <input type="text" id="recid-input" placeholder="Enter INSPIRE-HEP record id as 2178285 or https://inspirehep.net/literature/2178285" />
+                <input type="text" id="recid-input" placeholder="Enter INSPIRE record id (2178285), arXiv id (2208.06843), or DOI (10.1103/PhysRevLett.126.092301)" />
             </div>
             <button id="add-recid">Add record</button>
             <button id="clear-all">Clear all</button>
@@ -433,6 +433,62 @@
             window.history.pushState({}, '', url);
         }
         
+        // --------------------------------
+        // RECORD IDENTIFIER PARSING
+        // --------------------------------
+
+        // Classify user input as an INSPIRE record id, arXiv id, or DOI.
+        // Accepts bare identifiers, arXiv:/doi: prefixes, and inspirehep.net,
+        // arxiv.org, and doi.org URLs. Returns {type, value} or null.
+        function parseRecordIdentifier(input) {
+            let value = (input || '').trim();
+            if (!value) return null;
+
+            // INSPIRE literature URL or bare record id
+            let m = value.match(/inspirehep\.net\/(?:api\/)?literature\/(\d+)/i);
+            if (m) return { type: 'recid', value: m[1] };
+            if (/^\d+$/.test(value)) return { type: 'recid', value: value };
+
+            // arXiv: URLs, optional prefix, new-style (2208.06843) and
+            // old-style (hep-ph/9803241, cond-mat.str-el/0407066) ids;
+            // version suffixes are dropped
+            m = value.match(/arxiv\.org\/(?:abs|pdf)\/(.+?)(?:\.pdf)?\/?$/i);
+            if (m) value = m[1];
+            value = value.replace(/^arxiv:\s*/i, '');
+            m = value.match(/^(\d{4}\.\d{4,5})(v\d+)?$/);
+            if (m) return { type: 'arxiv', value: m[1] };
+            m = value.match(/^([a-z-]+(?:\.[A-Za-z-]+)?\/\d{7})(v\d+)?$/);
+            if (m) return { type: 'arxiv', value: m[1] };
+
+            // DOI: doi.org URLs, doi: prefix, bare 10.xxxx/yyyy
+            m = value.match(/(?:doi\.org\/|^doi:\s*)(10\.\d{4,9}\/\S+)$/i);
+            if (m) return { type: 'doi', value: m[1] };
+            m = value.match(/^(10\.\d{4,9}\/\S+)$/);
+            if (m) return { type: 'doi', value: m[1] };
+
+            return null;
+        }
+
+        // Resolve an arXiv id or DOI to an INSPIRE record id via the
+        // single-record API endpoints (api/arxiv/<id>, api/doi/<doi>)
+        async function resolveIdentifierToRecid(parsed) {
+            const endpoint = parsed.type === 'arxiv' ? 'arxiv' : 'doi';
+            const url = `https://inspirehep.net/api/${endpoint}/` +
+                (parsed.type === 'doi' ? encodeURI(parsed.value) : parsed.value);
+            const response = await fetch(url, {
+                headers: { "Accept": "application/json" }
+            });
+            if (!response.ok) {
+                throw new Error(response.status === 404 ? 'record not found' : `HTTP ${response.status}`);
+            }
+            const data = await response.json();
+            const recid = parseInt((data.metadata && data.metadata.control_number) || data.id);
+            if (!recid) {
+                throw new Error('no record id in the API response');
+            }
+            return recid;
+        }
+
         // --------------------------------
         // FETCHING CITATION DATES
         // --------------------------------
@@ -1358,27 +1414,40 @@
         // --------------------------------
         async function addRecid() {
             const recidInput = document.getElementById('recid-input');
-            let recidValue = recidInput.value.trim();
-            
-            // Extract recid from URL if it's a URL
-            if (recidValue.includes('inspirehep.net/literature/')) {
-                const match = recidValue.match(/\/literature\/(\d+)/);
-                if (match && match[1]) {
-                    recidValue = match[1];
-                }
-            }
-            
-            // Check if it's a valid number
-            if (!recidValue || !/^\d+$/.test(recidValue)) {
-                alert('Please enter a valid INSPIRE-HEP recid number');
+            const rawValue = recidInput.value.trim();
+            const loadingElement = document.getElementById('loading');
+
+            const parsed = parseRecordIdentifier(rawValue);
+            if (!parsed) {
+                alert('Please enter a valid INSPIRE record id, arXiv id, or DOI');
                 return;
             }
-            
-            const recid = parseInt(recidValue);
-            
+
+            let recid;
+            if (parsed.type === 'recid') {
+                recid = parseInt(parsed.value);
+            } else {
+                // Resolve arXiv/DOI to an INSPIRE record id first
+                loadingElement.textContent =
+                    `Resolving ${parsed.type === 'arxiv' ? 'arXiv:' : 'DOI '}${parsed.value}...`;
+                loadingElement.style.display = 'block';
+                disableButtons();
+                try {
+                    recid = await resolveIdentifierToRecid(parsed);
+                } catch (error) {
+                    alert(`Could not resolve "${rawValue}" on INSPIRE: ${error.message}`);
+                    loadingElement.style.display = 'none';
+                    enableButtons();
+                    return;
+                }
+                loadingElement.textContent = 'Loading citation data...';
+            }
+
             // Check if this recid is already in the list
             if (recidData[recid]) {
                 alert('This record is already in the list');
+                loadingElement.style.display = 'none';
+                enableButtons();
                 return;
             }
             

@@ -21,6 +21,7 @@ While the AI coding assistant (Windsurf + Claude Sonnet 3.7) has been immensely 
 ## Features
 
 - Track citation history for multiple papers simultaneously
+- Add records by INSPIRE record ID, arXiv identifier, or DOI (also as URLs)
 - Compare citation trajectories across different papers
 - Citation rate view: time-dependent citation rate (citations/year) with 68% uncertainty bands, treating citations as an inhomogeneous Poisson process. Smooth (boundary-corrected Gaussian kernel) estimate by default, with an optional binned histogram
 - Option to align timelines to normalize publication dates
@@ -30,7 +31,7 @@ While the AI coding assistant (Windsurf + Claude Sonnet 3.7) has been immensely 
 ## Usage
 
 1. Visit [https://vovchenko.net/inspire-citation-history](https://vovchenko.net/inspire-citation-history) or open `inspire-citation-history.html` locally in your web browser
-2. Enter an INSPIRE-HEP record ID in the input field (e.g., `2178285`) or paste a full INSPIRE-HEP URL (e.g., `https://inspirehep.net/literature/2178285`)
+2. Enter an INSPIRE-HEP record ID (e.g., `2178285`), an arXiv identifier (e.g., `2208.06843`, `arXiv:2208.06843`, or `hep-ph/9803241`), or a DOI (e.g., `10.1103/PhysRevLett.126.092301`) in the input field. Full `inspirehep.net`, `arxiv.org`, and `doi.org` URLs are also accepted; arXiv IDs and DOIs are resolved to INSPIRE records via the INSPIRE API
 3. Click "Add record" to add the paper to your visualization
 4. Add multiple papers to compare citation histories
 5. Toggle "Align timeline" to normalize all citation histories to start at the same point
@@ -70,7 +71,7 @@ The application is built as a single HTML file with embedded JavaScript that:
 
 - [ ] Improve performance by caching citation data and/or optimizing API calls
 - [ ] Customize chart appearance (colors, line styles)
-- [ ] Add support for arXiv and/or DOI identifiers
+- [x] Add support for arXiv and/or DOI identifiers
 - [ ] Implement better error handling for API rate limits
 - [ ] Utilizing other citation databases
 
