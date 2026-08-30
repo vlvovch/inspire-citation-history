@@ -1160,6 +1160,50 @@
             });
         }
 
+        // Present-rate annotation: a small "value ± err" label in the series
+        // color, in the right margin next to each curve's latest point.
+        const presentRateLabelPlugin = {
+            id: 'presentRateLabel',
+            afterDatasetsDraw: (chart) => {
+                const ctx = chart.ctx;
+                const annos = [];
+                chart.data.datasets.forEach((ds, i) => {
+                    if (!ds.label || ds.label.startsWith('__')) return;
+                    if (!chart.isDatasetVisible(i)) return;
+                    const data = ds.data;
+                    if (!data || data.length === 0) return;
+                    const p = data[data.length - 1];
+                    const err = (p.hi - p.lo) / 2;
+                    const dec = p.y < 10 ? 1 : 0;
+                    annos.push({
+                        text: `${p.y.toFixed(dec)} ± ${err.toFixed(dec)}`,
+                        color: ds.borderColor,
+                        y: chart.scales.y.getPixelForValue(p.y)
+                    });
+                });
+                if (annos.length === 0) return;
+                // keep labels inside the plot vertically, without overlaps
+                const top = chart.chartArea.top + 6;
+                const bottom = chart.chartArea.bottom - 6;
+                annos.sort((a, b) => a.y - b.y);
+                annos.forEach(a => { a.y = Math.min(Math.max(a.y, top), bottom); });
+                for (let i = 1; i < annos.length; i++) {
+                    if (annos[i].y - annos[i - 1].y < 13) {
+                        annos[i].y = annos[i - 1].y + 13;
+                    }
+                }
+                ctx.save();
+                ctx.font = '11px "Comic Sans MS", "Comic Sans", cursive';
+                ctx.textAlign = 'left';
+                ctx.textBaseline = 'middle';
+                annos.forEach(a => {
+                    ctx.fillStyle = a.color;
+                    ctx.fillText(a.text, chart.chartArea.right + 6, a.y);
+                });
+                ctx.restore();
+            }
+        };
+
         // Render the citation-rate view (binned Poisson rate with 68% bands)
         // using Chart.js, which supports shaded bands and a native time axis.
         function renderRateChart(Mode) {
@@ -1260,10 +1304,12 @@
             rateChart = new Chart(rateCanvas, {
                 type: 'line',
                 data: { datasets: datasets },
+                plugins: [presentRateLabelPlugin],
                 options: {
                     responsive: true,
                     devicePixelRatio: 2,
                     animation: false,
+                    layout: { padding: { right: 84 } },
                     interaction: { mode: 'nearest', intersect: true },
                     plugins: {
                         title: { display: true, text: 'Citation Rate', font: { size: 20 } },
@@ -1285,14 +1331,13 @@
                             callbacks: {
                                 label: (ctx) => {
                                     const p = ctx.raw;
-                                    const nText = p.smooth ? `n_eff≈${p.n}` : `n=${p.n}`;
-                                    let text = `${ctx.dataset.label}: ${p.y.toFixed(1)} citations/year` +
-                                        ` (${nText}, 68% CL [${p.lo.toFixed(2)}, ${p.hi.toFixed(2)}])`;
-                                    if (p.partial) {
-                                        text += p.smooth ? ' — near present, may be incomplete'
-                                            : ' — current bin, may be incomplete';
+                                    const up = p.hi - p.y;
+                                    const dn = p.y - p.lo;
+                                    if (!(up > 0 || dn > 0)) return p.y.toFixed(1);
+                                    if (Math.abs(up - dn) < 0.15 * Math.max(up, dn)) {
+                                        return `${p.y.toFixed(1)} ± ${((up + dn) / 2).toFixed(1)}`;
                                     }
-                                    return text;
+                                    return `${p.y.toFixed(1)} +${up.toFixed(1)} -${dn.toFixed(1)}`;
                                 }
                             }
                         }
