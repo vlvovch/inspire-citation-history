@@ -888,7 +888,7 @@
 
         // Bin citation dates into a piecewise-constant rate estimate.
         // Returns points with x (Date in Mode 0, months since publication in
-        // Mode 1, years in Mode 2), y/lo/hi in citations per month, the bin
+        // Mode 1, years in Mode 2), y/lo/hi in citations per year, the bin
         // count n, and a partial flag on the current (incomplete) bin.
         function computeRateSeries(record, Mode, binMonthsOverride, nowMs) {
             const base = getCitationOffsets(record, nowMs);
@@ -918,11 +918,12 @@
                 const mid = (start + end) / 2;
                 const n = counts[k];
                 const interval = poissonInterval68(n);
+                // width is in months; displayed unit is citations per year
                 points.push({
                     x: rateXValue(pubDate, mid, Mode),
-                    y: n / width,
-                    lo: interval[0] / width,
-                    hi: interval[1] / width,
+                    y: 12 * n / width,
+                    lo: 12 * interval[0] / width,
+                    hi: 12 * interval[1] / width,
                     n: n,
                     partial: k === nBins - 1 // current bin: still filling + indexing lag
                 });
@@ -969,15 +970,16 @@
                     if (u < -6 || u > 6) continue;
                     sum += norm * Math.exp(-0.5 * u * u);
                 }
-                const rate = sum / mass;
+                const rate = sum / mass; // per month internally
                 const exposure = mass * mass / kernelSqInt; // effective months
                 const nEff = rate * exposure;
                 const interval = poissonInterval68(nEff);
+                // displayed unit is citations per year
                 points.push({
                     x: rateXValue(pubDate, t, Mode),
-                    y: rate,
-                    lo: interval[0] / exposure,
-                    hi: interval[1] / exposure,
+                    y: 12 * rate,
+                    lo: 12 * interval[0] / exposure,
+                    hi: 12 * interval[1] / exposure,
                     n: Math.round(nEff * 10) / 10,
                     partial: t > T - h, // within one sigma of now: indexing lag
                     smooth: true
@@ -1284,7 +1286,7 @@
                                 label: (ctx) => {
                                     const p = ctx.raw;
                                     const nText = p.smooth ? `n_eff≈${p.n}` : `n=${p.n}`;
-                                    let text = `${ctx.dataset.label}: ${p.y.toFixed(2)} citations/month` +
+                                    let text = `${ctx.dataset.label}: ${p.y.toFixed(1)} citations/year` +
                                         ` (${nText}, 68% CL [${p.lo.toFixed(2)}, ${p.hi.toFixed(2)}])`;
                                     if (p.partial) {
                                         text += p.smooth ? ' — near present, may be incomplete'
@@ -1299,7 +1301,7 @@
                         x: xScale,
                         y: {
                             beginAtZero: true,
-                            title: { display: true, text: 'Citations per month' }
+                            title: { display: true, text: 'Citations per year' }
                         }
                     }
                 }
@@ -1795,7 +1797,7 @@
             // N is the bin count for the binned estimator and the effective
             // count n_eff for the smooth one; WidthMonths is the bin width or
             // the smoothing FWHM respectively.
-            let csvContent = 'Paper,Estimator,WidthMonths,X,CitationsPerMonth,ErrLow68,ErrHigh68,N,Provisional\n';
+            let csvContent = 'Paper,Estimator,WidthMonths,X,CitationsPerYear,ErrLow68,ErrHigh68,N,Provisional\n';
             rateData.forEach(series => {
                 series.points.forEach(p => {
                     const xValue = p.x instanceof Date ? p.x.toISOString().split('T')[0] : p.x;
