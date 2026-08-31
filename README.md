@@ -24,6 +24,7 @@ While the AI coding assistant (Windsurf + Claude Sonnet 3.7) has been immensely 
 - Add records by INSPIRE record ID, arXiv identifier, or DOI (also as URLs)
 - Compare citation trajectories across different papers
 - Citation rate view: time-dependent citation rate (citations/year) with 68% uncertainty bands, treating citations as an inhomogeneous Poisson process. Three estimators: smooth (boundary-corrected Gaussian kernel, default), binned histogram, and Bayesian blocks (optimal change-point segmentation, [Scargle et al. 2013](https://arxiv.org/abs/1207.5578))
+- Optional model fit ([Wang, Song & Barabási 2013](https://www.science.org/doi/10.1126/science.1237825)): overlays the fitted citation model on the rate view and projects each paper's ultimate citation count with bootstrap uncertainties. Requires at least 5 years of history and 50 citations, since the extrapolation is unreliable for young papers, and fits poorly for papers with multi-burst citation histories
 - Option to align timelines to normalize publication dates
 - Read multiple INSPIRE-HEP record IDs through URL
 - Export the graph to a file
@@ -44,7 +45,7 @@ In the rate view, the CSV export contains the rate series (rate, 68% interval bo
 
 You can also directly share specific citation histories by using URL parameters, for example: [https://vovchenko.net/inspire-citation-history/?recids=1850675-1914564](https://vovchenko.net/inspire-citation-history/?recids=1850675-1914564)
 
-Supported parameters: `recids` (dash-separated record IDs), `align=true` (align timelines), `rate=true` (citation rate view), `est` (rate estimator: `binned` or `blocks`; smooth is the default), `p0` (Bayesian-blocks sensitivity: `0.3` or `0.9`; `0.05` is the strict default), and `bin` (smoothing scale / bin width in months: 1, 3, 6, or 12; omit for automatic)
+Supported parameters: `recids` (dash-separated record IDs), `align=true` (align timelines), `rate=true` (citation rate view), `est` (rate estimator: `binned` or `blocks`; smooth is the default), `p0` (Bayesian-blocks sensitivity: `0.3` or `0.9`; `0.05` is the strict default), `wsb=true` (overlay the Wang–Song–Barabási model fit), and `bin` (smoothing scale / bin width in months: 1, 3, 6, or 12; omit for automatic)
 
 ### Example Queries
 

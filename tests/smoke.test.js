@@ -179,7 +179,7 @@ document.addEventListener('DOMContentLoaded', () => {
         smokeLog('p0 param dropped at strict default', location.search.indexOf('p0=') < 0, location.search);
 
         // Every rate control must redraw through its real change event
-        var controlIds = ['rate-estimator', 'bin-width', 'blocks-p0'];
+        var controlIds = ['rate-estimator', 'bin-width', 'blocks-p0', 'wsb-fit'];
         var allWired = controlIds.every(function (id) {
             var before = window.__chartConfigs.length;
             document.getElementById(id).dispatchEvent(new Event('change'));
@@ -196,6 +196,35 @@ document.addEventListener('DOMContentLoaded', () => {
         updateUrl();
         smokeLog('est param removed when back to default', location.search.indexOf('est=') < 0, location.search);
         smokeLog('sensitivity selector hidden outside blocks', document.getElementById('p0-group').style.display === 'none');
+
+        // WSB model fit overlay
+        smokeLog('wsb checkbox shown in rate view, off by default',
+            document.getElementById('wsb-group').style.display === 'flex' &&
+            !document.getElementById('wsb-fit').checked);
+        document.getElementById('wsb-fit').checked = true;
+        document.getElementById('wsb-fit').dispatchEvent(new Event('change'));
+        var cfgW = window.__chartConfigs[window.__chartConfigs.length - 1];
+        var wsbDs = cfgW.data.datasets.filter(function (d) { return d.label.indexOf('__wsb_') === 0; });
+        smokeLog('wsb overlay only for the mature paper', wsbDs.length === 1, 'got ' + wsbDs.length);
+        smokeLog('wsb overlay dashed without markers', wsbDs.length === 1 &&
+            Array.isArray(wsbDs[0].borderDash) && wsbDs[0].pointRadius === 0);
+        var centrals = cfgW.data.datasets.filter(function (d) { return d.label && d.label.indexOf('__') !== 0; });
+        smokeLog('wsb summary attached: ok for mature, refused for young',
+            centrals.length === 2 && centrals[0].wsbSummary && centrals[0].wsbSummary.ok === true &&
+            centrals[1].wsbSummary && centrals[1].wsbSummary.ok === false,
+            JSON.stringify(centrals.map(function (d) { return d.wsbSummary && d.wsbSummary.ok; })));
+        smokeLog('wsb projection is finite and beyond observed count', centrals[0].wsbSummary.ok &&
+            isFinite(centrals[0].wsbSummary.cinf) && centrals[0].wsbSummary.cinf > 300,
+            'cinf=' + (centrals[0].wsbSummary.cinf || 0).toFixed(0));
+        smokeLog('all datasets carry groupKey', cfgW.data.datasets.every(function (d) { return d.groupKey !== undefined; }));
+        updateUrl();
+        smokeLog('url carries wsb=true', location.search.indexOf('wsb=true') >= 0, location.search);
+        document.getElementById('wsb-fit').checked = false;
+        document.getElementById('wsb-fit').dispatchEvent(new Event('change'));
+        var cfgW2 = window.__chartConfigs[window.__chartConfigs.length - 1];
+        smokeLog('wsb overlay removed when unchecked',
+            cfgW2.data.datasets.filter(function (d) { return d.label.indexOf('__wsb_') === 0; }).length === 0 &&
+            location.search.indexOf('wsb=') < 0, location.search);
 
         document.getElementById('show-rate').checked = false;
         updateChart();
@@ -242,6 +271,9 @@ document.addEventListener('DOMContentLoaded', () => {
         history.pushState({}, '', '?rate=true&est=blocks&p0=0.9');
         parseUrlParams();
         smokeLog('p0 URL parameter parsed', document.getElementById('blocks-p0').value === '0.9');
+        history.pushState({}, '', '?rate=true&wsb=true');
+        parseUrlParams();
+        smokeLog('wsb URL parameter parsed', document.getElementById('wsb-fit').checked === true);
     } catch (err) {
         smokeLog('EXCEPTION: ' + err.message + ' @ ' + ((err.stack || '').split('\\n')[1] || ''), false);
     }

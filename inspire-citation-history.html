@@ -227,6 +227,10 @@
                     <option value="12">1 year</option>
                 </select>
             </div>
+            <div id="wsb-group" style="display: none; align-items: center; margin-right: 20px;">
+                <input type="checkbox" id="wsb-fit" />
+                <label for="wsb-fit" style="margin-left: 5px;">Model fit</label>
+            </div>
             <div style="display: flex; align-items: center;">
                 <input type="checkbox" id="align-timeline" />
                 <label for="align-timeline" style="margin-left: 5px;">Align timeline</label>
@@ -297,6 +301,7 @@
         let isLoading = false; // Flag to track loading state
         let rateChart = null; // Chart.js instance for the citation-rate view
         let rateData = null;  // Binned rate series per record, for CSV export
+        const wsbCache = new Map(); // Memoized WSB fits per (recid, N, span)
         
         // --------------------------------
         // DEBUG LOGGING
@@ -388,12 +393,18 @@
                     } else {
                         url.searchParams.delete('p0');
                     }
+                    if (document.getElementById('wsb-fit').checked) {
+                        url.searchParams.set('wsb', 'true');
+                    } else {
+                        url.searchParams.delete('wsb');
+                    }
                 } else {
                     url.searchParams.delete('rate');
                     url.searchParams.delete('bin');
                     url.searchParams.delete('smooth');
                     url.searchParams.delete('est');
                     url.searchParams.delete('p0');
+                    url.searchParams.delete('wsb');
                 }
             } else {
                 // Remove all parameters if no records
@@ -404,6 +415,7 @@
                 url.searchParams.delete('smooth');
                 url.searchParams.delete('est');
                 url.searchParams.delete('p0');
+                url.searchParams.delete('wsb');
             }
             
             // Update the URL without reloading the page
@@ -1471,6 +1483,220 @@
             return { points: points, widthMonths: '' };
         }
 
+        // --- Wang-Song-Barabasi model fit (Science 342, 127 (2013)) ---
+        // Citation rate lambda * P(t; mu, sigma) * (m + c(t)) with log-normal
+        // aging P and preferential attachment; closed form
+        //   c(t) = m * (exp(lambda * Phi((ln t - mu)/sigma)) - 1),
+        // giving the ultimate impact c(inf) = m * (exp(lambda) - 1).
+        // Fitted by maximum likelihood of the point process: lambda has a
+        // closed-form profile MLE, (mu, sigma) via grid + Nelder-Mead.
+        const WSB_M = 30;
+        const WSB_MIN_MONTHS = 60;  // extrapolation is unreliable for young papers
+        const WSB_MIN_CITATIONS = 50;
+        const WSB_BOOTSTRAP = 40;
+
+        // Inverse standard normal CDF (Acklam's rational approximation)
+        function normInv(p) {
+            if (!(p > 0 && p < 1)) return p <= 0 ? -Infinity : Infinity;
+            const a = [-3.969683028665376e+01, 2.209460984245205e+02, -2.759285104469687e+02,
+                1.383577518672690e+02, -3.066479806614716e+01, 2.506628277459239e+00];
+            const b = [-5.447609879822406e+01, 1.615858368580409e+02, -1.556989798598866e+02,
+                6.680131188771972e+01, -1.328068155288572e+01];
+            const c = [-7.784894002430293e-03, -3.223964580411365e-01, -2.400758277161838e+00,
+                -2.549732539343734e+00, 4.374664141464968e+00, 2.938163982698783e+00];
+            const d = [7.784695709041462e-03, 3.224671290700398e-01, 2.445134137142996e+00,
+                3.754408661907416e+00];
+            const pl = 0.02425;
+            let q, r;
+            if (p < pl) {
+                q = Math.sqrt(-2 * Math.log(p));
+                return (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) /
+                    ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1);
+            }
+            if (p > 1 - pl) {
+                q = Math.sqrt(-2 * Math.log(1 - p));
+                return -(((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) /
+                    ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1);
+            }
+            q = p - 0.5;
+            r = q * q;
+            return (((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q /
+                (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1);
+        }
+
+        // Profile log-likelihood over (mu, sigma); lambda profiled out in
+        // closed form: lambda_hat = N / A with
+        //   A = sum_{i=0..N} (m + i) * (Phi(x_{i+1}) - Phi(x_i)),
+        // x_i at the event times (x_0 -> -inf, x_{N+1} at the observation end)
+        function wsbProfile(logTs, logT, mu, sigma) {
+            const N = logTs.length;
+            if (sigma < 0.05 || sigma > 4) return { ll: -Infinity, lambda: 0 };
+            let A = 0;
+            let prevPhi = 0;
+            let sumSq = 0;
+            for (let i = 0; i < N; i++) {
+                const x = (logTs[i] - mu) / sigma;
+                const phi = normCdf(x);
+                A += (WSB_M + i) * Math.max(phi - prevPhi, 0);
+                prevPhi = phi;
+                sumSq += x * x;
+            }
+            A += (WSB_M + N) * Math.max(normCdf((logT - mu) / sigma) - prevPhi, 0);
+            if (!(A > 1e-12)) return { ll: -Infinity, lambda: 0 };
+            const lambda = N / A;
+            // ln P(t_i) = -x_i^2/2 - ln(sqrt(2 pi)) - ln sigma - ln t_i;
+            // the sum of ln t_i is parameter-independent and dropped
+            const ll = N * Math.log(lambda) - sumSq / 2 - N * Math.log(sigma) - N;
+            return { ll: ll, lambda: lambda };
+        }
+
+        // Nelder-Mead minimization in 2D
+        function nelderMead2(f, x0, step, iters) {
+            let simplex = [
+                x0,
+                [x0[0] + step[0], x0[1]],
+                [x0[0], x0[1] + step[1]]
+            ].map(p => ({ p: p, v: f(p) }));
+            const mid = (u, v, w1, w2) => [u[0] * w1 + v[0] * w2, u[1] * w1 + v[1] * w2];
+            for (let it = 0; it < iters; it++) {
+                simplex.sort((a, b) => a.v - b.v);
+                const best = simplex[0], second = simplex[1], worst = simplex[2];
+                const cx = mid(best.p, second.p, 0.5, 0.5);
+                const refl = mid(cx, worst.p, 2, -1);
+                const vr = f(refl);
+                if (vr < best.v) {
+                    const expd = mid(cx, worst.p, 3, -2);
+                    const ve = f(expd);
+                    simplex[2] = ve < vr ? { p: expd, v: ve } : { p: refl, v: vr };
+                } else if (vr < second.v) {
+                    simplex[2] = { p: refl, v: vr };
+                } else {
+                    const con = mid(cx, worst.p, 0.5, 0.5);
+                    const vc = f(con);
+                    if (vc < worst.v) {
+                        simplex[2] = { p: con, v: vc };
+                    } else {
+                        simplex[1] = { p: mid(best.p, second.p, 0.5, 0.5), v: f(mid(best.p, second.p, 0.5, 0.5)) };
+                        simplex[2] = { p: mid(best.p, worst.p, 0.5, 0.5), v: f(mid(best.p, worst.p, 0.5, 0.5)) };
+                    }
+                }
+            }
+            simplex.sort((a, b) => a.v - b.v);
+            return simplex[0].p;
+        }
+
+        // Core fit without maturity guards (used by the bootstrap refits)
+        function wsbFitCore(offsetsMonths, T, muStart, sigmaStart) {
+            const ts = offsetsMonths.map(t => Math.max(t, 0.1)).sort((a, b) => a - b);
+            const logTs = ts.map(t => Math.log(t));
+            const logT = Math.log(Math.max(T, 0.2));
+            const evalAt = p => {
+                const r = wsbProfile(logTs, logT, p[0], p[1]);
+                return -r.ll;
+            };
+            let start;
+            if (muStart !== undefined) {
+                start = [muStart, sigmaStart];
+            } else {
+                // Coarse grid over immediacy and longevity
+                let bestV = Infinity;
+                start = [Math.log(T / 4), 1];
+                for (let gi = 0; gi < 30; gi++) {
+                    const mu = Math.log(0.5) + (Math.log(2 * T) - Math.log(0.5)) * gi / 29;
+                    for (let gj = 0; gj < 20; gj++) {
+                        const sigma = 0.15 + (2.5 - 0.15) * gj / 19;
+                        const v = evalAt([mu, sigma]);
+                        if (v < bestV) { bestV = v; start = [mu, sigma]; }
+                    }
+                }
+            }
+            const opt = nelderMead2(evalAt, start, [0.2, 0.1], 120);
+            const prof = wsbProfile(logTs, logT, opt[0], opt[1]);
+            if (!(prof.ll > -Infinity)) return { ok: false, reason: 'fit failed' };
+            return {
+                ok: true,
+                lambda: prof.lambda,
+                mu: opt[0],
+                sigma: opt[1],
+                cinf: WSB_M * Math.expm1(prof.lambda),
+                ll: prof.ll
+            };
+        }
+
+        // Simulate the fitted process up to age T months (time rescaling:
+        // between events, lambda*(m+i)*dPhi is a unit-rate exponential)
+        function wsbSimulate(lambda, mu, sigma, T, cap) {
+            const phiEnd = normCdf((Math.log(T) - mu) / sigma);
+            const times = [];
+            let phi = 0;
+            for (;;) {
+                const i = times.length;
+                phi += -Math.log(1 - Math.random()) / (lambda * (WSB_M + i));
+                if (phi >= phiEnd || phi >= 1) break;
+                times.push(Math.exp(mu + sigma * normInv(phi)));
+                if (times.length >= cap) return { ok: false, times: times };
+            }
+            return { ok: true, times: times };
+        }
+
+        // Parametric bootstrap 68% interval on the ultimate impact
+        function wsbBootstrap(fit, T, B) {
+            const cinfs = [];
+            let divergent = 0;
+            for (let b = 0; b < B; b++) {
+                const sim = wsbSimulate(fit.lambda, fit.mu, fit.sigma, T, 20000);
+                if (!sim.ok || sim.times.length < 10) { divergent++; continue; }
+                const refit = wsbFitCore(sim.times, T, fit.mu, fit.sigma);
+                if (!refit.ok) { divergent++; continue; }
+                cinfs.push(Math.min(refit.cinf, 1e7));
+            }
+            if (cinfs.length < B * 0.5) return { ok: false };
+            cinfs.sort((a, b) => a - b);
+            const q = f => cinfs[Math.min(cinfs.length - 1, Math.max(0, Math.round(f * (cinfs.length - 1))))];
+            return { ok: true, lo: q(0.16), hi: q(0.84), unstable: divergent > B * 0.3 };
+        }
+
+        // Full fit with maturity guards and bootstrap
+        function wsbFit(offsetsMonths, T) {
+            if (offsetsMonths.length < WSB_MIN_CITATIONS) {
+                return { ok: false, reason: 'needs at least ' + WSB_MIN_CITATIONS + ' citations' };
+            }
+            if (T < WSB_MIN_MONTHS) {
+                return { ok: false, reason: 'needs at least ' + Math.round(WSB_MIN_MONTHS / 12) + ' years of history' };
+            }
+            const fit = wsbFitCore(offsetsMonths, T);
+            if (!fit.ok) return fit;
+            const boot = wsbBootstrap(fit, T, WSB_BOOTSTRAP);
+            if (boot.ok) {
+                fit.lo = boot.lo;
+                fit.hi = boot.hi;
+                fit.unstable = boot.unstable;
+            }
+            return fit;
+        }
+
+        // Model rate curve in citations/year: rate(t) = lambda P(t) m e^(lambda Phi)
+        function wsbRateCurve(fit, T, nPoints) {
+            const points = [];
+            const n = nPoints || 150;
+            for (let g = 1; g <= n; g++) {
+                const t = T * g / n;
+                if (t < 0.1) continue;
+                const x = (Math.log(t) - fit.mu) / fit.sigma;
+                const pdf = Math.exp(-x * x / 2) / (Math.sqrt(2 * Math.PI) * fit.sigma * t);
+                const rate = fit.lambda * pdf * WSB_M * Math.exp(fit.lambda * normCdf(x));
+                points.push({ t: t, y: 12 * rate });
+            }
+            return points;
+        }
+
+        function formatCitationCount(v) {
+            if (!(v >= 0)) return '?';
+            if (v < 1000) return String(Math.round(v));
+            if (v < 100000) return (v / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
+            return Math.round(v / 1000) + 'k';
+        }
+
         function hexToRgba(hex, alpha) {
             const r = parseInt(hex.slice(1, 3), 16);
             const g = parseInt(hex.slice(3, 5), 16);
@@ -1496,6 +1722,7 @@
                 showRate && estimatorChoice !== 'blocks' ? 'flex' : 'none';
             document.getElementById('p0-group').style.display =
                 showRate && estimatorChoice === 'blocks' ? 'flex' : 'none';
+            document.getElementById('wsb-group').style.display = showRate ? 'flex' : 'none';
             document.getElementById('bin-width-label').textContent =
                 estimatorChoice === 'smooth' ? 'Smoothing:' : 'Bin width:';
 
@@ -1621,21 +1848,34 @@
                     const p = data[data.length - 1];
                     const err = (p.hi - p.lo) / 2;
                     const dec = p.y < 10 ? 1 : 0;
+                    const lines = [`${p.y.toFixed(dec)} ± ${err.toFixed(dec)}`];
+                    // Projected ultimate citation count from the WSB fit
+                    if (ds.wsbSummary && ds.wsbSummary.ok) {
+                        const s = ds.wsbSummary;
+                        let t = '∞ ' + formatCitationCount(s.cinf);
+                        if (s.lo !== undefined) {
+                            t += ' ± ' + formatCitationCount((s.hi - s.lo) / 2);
+                        }
+                        if (s.unstable) t += '?';
+                        lines.push(t);
+                    }
                     annos.push({
-                        text: `${p.y.toFixed(dec)} ± ${err.toFixed(dec)}`,
+                        lines: lines,
                         color: ds.borderColor,
                         y: chart.scales.y.getPixelForValue(p.y)
                     });
                 });
                 if (annos.length === 0) return;
                 // keep labels inside the plot vertically, without overlaps
+                const heightOf = a => a.lines.length * 13;
                 const top = chart.chartArea.top + 6;
                 const bottom = chart.chartArea.bottom - 6;
                 annos.sort((a, b) => a.y - b.y);
-                annos.forEach(a => { a.y = Math.min(Math.max(a.y, top), bottom); });
+                annos.forEach(a => { a.y = Math.min(Math.max(a.y, top), bottom - (heightOf(a) - 13)); });
                 for (let i = 1; i < annos.length; i++) {
-                    if (annos[i].y - annos[i - 1].y < 13) {
-                        annos[i].y = annos[i - 1].y + 13;
+                    const minGap = heightOf(annos[i - 1]) + 2;
+                    if (annos[i].y - annos[i - 1].y < minGap) {
+                        annos[i].y = annos[i - 1].y + minGap;
                     }
                 }
                 ctx.save();
@@ -1644,7 +1884,9 @@
                 ctx.textBaseline = 'middle';
                 annos.forEach(a => {
                     ctx.fillStyle = a.color;
-                    ctx.fillText(a.text, chart.chartArea.right + 6, a.y);
+                    a.lines.forEach((line, li) => {
+                        ctx.fillText(line, chart.chartArea.right + 6, a.y + li * 13);
+                    });
                 });
                 ctx.restore();
             }
@@ -1662,6 +1904,7 @@
             const binOverride = parseInt(document.getElementById('bin-width').value) || 0;
             const estimator = document.getElementById('rate-estimator').value;
             const blocksP0 = parseFloat(document.getElementById('blocks-p0').value) || BLOCKS_P0;
+            const wsbOn = document.getElementById('wsb-fit').checked;
             Chart.defaults.font.family = '"Comic Sans MS", "Comic Sans", cursive';
 
             const datasets = [];
@@ -1695,7 +1938,8 @@
 
                 // Central estimate; the provisional part near the present
                 // (incomplete current bin / last sigma) is drawn dashed.
-                datasets.push({
+                const centralDs = {
+                    groupKey: recid,
                     label: record.refname,
                     data: points,
                     borderColor: color,
@@ -1713,9 +1957,11 @@
                         borderDash: (ctx) =>
                             points[ctx.p1DataIndex] && points[ctx.p1DataIndex].partial ? [6, 4] : undefined
                     }
-                });
+                };
+                datasets.push(centralDs);
                 // 68% band: invisible upper edge, lower edge filled up to it.
                 datasets.push({
+                    groupKey: recid,
                     label: '__band_hi_' + recid,
                     data: points.map(p => ({ x: p.x, y: p.hi })),
                     borderWidth: 0,
@@ -1727,6 +1973,7 @@
                     backgroundColor: 'transparent'
                 });
                 datasets.push({
+                    groupKey: recid,
                     label: '__band_lo_' + recid,
                     data: points.map(p => ({ x: p.x, y: p.lo })),
                     borderWidth: 0,
@@ -1738,6 +1985,36 @@
                     fill: '-1',
                     backgroundColor: hexToRgba(color, 0.18)
                 });
+
+                // Optional WSB model overlay: dashed fitted rate curve plus the
+                // projected ultimate citation count in the margin
+                if (wsbOn) {
+                    const base = getCitationOffsets(record);
+                    if (base) {
+                        const key = recid + ':' + base.offsets.length + ':' + Math.round(base.spanMonths);
+                        let fit = wsbCache.get(key);
+                        if (!fit) {
+                            fit = wsbFit(base.offsets, base.spanMonths);
+                            wsbCache.set(key, fit);
+                        }
+                        centralDs.wsbSummary = fit;
+                        if (fit.ok) {
+                            const curve = wsbRateCurve(fit, base.spanMonths);
+                            datasets.push({
+                                groupKey: recid,
+                                label: '__wsb_' + recid,
+                                data: curve.map(p => ({ x: rateXValue(base.pubDate, p.t, Mode), y: p.y })),
+                                borderColor: color,
+                                borderDash: [8, 5],
+                                borderWidth: 1.8,
+                                pointRadius: 0,
+                                pointHitRadius: 0,
+                                fill: false,
+                                tension: 0.25
+                            });
+                        }
+                    }
+                }
             });
 
             const xScale = Mode !== 0 ? {
@@ -1767,14 +2044,14 @@
                         title: { display: true, text: 'Citation Rate', font: { size: 20 } },
                         legend: {
                             labels: { filter: (item) => !item.text.startsWith('__') },
-                            // Toggle a paper together with its band datasets
+                            // Toggle a paper together with its band and model datasets
                             onClick: (e, legendItem, legend) => {
                                 const ci = legend.chart;
-                                const idx = legendItem.datasetIndex;
-                                const visible = ci.isDatasetVisible(idx);
-                                for (let j = idx; j < Math.min(idx + 3, ci.data.datasets.length); j++) {
-                                    ci.setDatasetVisibility(j, !visible);
-                                }
+                                const key = ci.data.datasets[legendItem.datasetIndex].groupKey;
+                                const visible = ci.isDatasetVisible(legendItem.datasetIndex);
+                                ci.data.datasets.forEach((d, j) => {
+                                    if (d.groupKey === key) ci.setDatasetVisibility(j, !visible);
+                                });
                                 ci.update();
                             }
                         },
@@ -1965,6 +2242,10 @@
             updateChart();
             updateUrl();
         });
+        document.getElementById('wsb-fit').addEventListener('change', function() {
+            updateChart();
+            updateUrl();
+        });
         document.getElementById('bin-width').addEventListener('change', function() {
             updateChart();
             updateUrl();
@@ -2016,6 +2297,10 @@
             const p0Param = urlParams.get('p0');
             if (['0.05', '0.3', '0.9'].includes(p0Param)) {
                 document.getElementById('blocks-p0').value = p0Param;
+            }
+            const wsbParam = urlParams.get('wsb');
+            if (wsbParam !== null) {
+                document.getElementById('wsb-fit').checked = wsbParam.toLowerCase() === 'true';
             }
             
             if (recidsParam) {

@@ -62,8 +62,8 @@ const section = scriptBody.slice(sectionStart, sectionEnd)
     + '\n' + scriptBody.slice(cacheStart, cacheEnd) + '\n' + scriptBody.slice(spreadStart, spreadEnd);
 const sandbox = {};
 vm.createContext(sandbox);
-vm.runInContext(section + '\nthis.poissonInterval68 = poissonInterval68; this.chooseBinWidthMonths = chooseBinWidthMonths; this.computeRateSeries = computeRateSeries; this.hexToRgba = hexToRgba; this.erf = erf; this.normCdf = normCdf; this.computeSmoothRateSeries = computeSmoothRateSeries; this.presentRateLabelPlugin = presentRateLabelPlugin; this.parseRecordIdentifier = parseRecordIdentifier; this.computeBackoffDelayMs = computeBackoffDelayMs; this.cacheLoad = cacheLoad; this.cacheSave = cacheSave; this.cacheEvictOldest = cacheEvictOldest; this.cacheKeys = cacheKeys; this.safeLocalStorage = safeLocalStorage; this.CACHE_PREFIX = CACHE_PREFIX; this.CACHE_TTL_MS = CACHE_TTL_MS; this.CACHE_MAX_ENTRIES = CACHE_MAX_ENTRIES; this.bayesianBlocksEdges = bayesianBlocksEdges; this.computeBlocksRateSeries = computeBlocksRateSeries; this.BLOCKS_P0 = BLOCKS_P0; this.spreadImpreciseDates = spreadImpreciseDates; this.cacheRemoveOldVersions = cacheRemoveOldVersions;', sandbox);
-const { poissonInterval68, chooseBinWidthMonths, computeRateSeries, hexToRgba, erf, normCdf, computeSmoothRateSeries, presentRateLabelPlugin, parseRecordIdentifier, computeBackoffDelayMs, cacheLoad, cacheSave, cacheEvictOldest, cacheKeys, safeLocalStorage, CACHE_PREFIX, CACHE_TTL_MS, CACHE_MAX_ENTRIES, bayesianBlocksEdges, computeBlocksRateSeries, BLOCKS_P0, spreadImpreciseDates, cacheRemoveOldVersions } = sandbox;
+vm.runInContext(section + '\nthis.poissonInterval68 = poissonInterval68; this.chooseBinWidthMonths = chooseBinWidthMonths; this.computeRateSeries = computeRateSeries; this.hexToRgba = hexToRgba; this.erf = erf; this.normCdf = normCdf; this.computeSmoothRateSeries = computeSmoothRateSeries; this.presentRateLabelPlugin = presentRateLabelPlugin; this.parseRecordIdentifier = parseRecordIdentifier; this.computeBackoffDelayMs = computeBackoffDelayMs; this.cacheLoad = cacheLoad; this.cacheSave = cacheSave; this.cacheEvictOldest = cacheEvictOldest; this.cacheKeys = cacheKeys; this.safeLocalStorage = safeLocalStorage; this.CACHE_PREFIX = CACHE_PREFIX; this.CACHE_TTL_MS = CACHE_TTL_MS; this.CACHE_MAX_ENTRIES = CACHE_MAX_ENTRIES; this.bayesianBlocksEdges = bayesianBlocksEdges; this.computeBlocksRateSeries = computeBlocksRateSeries; this.BLOCKS_P0 = BLOCKS_P0; this.spreadImpreciseDates = spreadImpreciseDates; this.cacheRemoveOldVersions = cacheRemoveOldVersions; this.normInv = normInv; this.wsbProfile = wsbProfile; this.wsbFitCore = wsbFitCore; this.wsbFit = wsbFit; this.wsbSimulate = wsbSimulate; this.wsbBootstrap = wsbBootstrap; this.wsbRateCurve = wsbRateCurve; this.formatCitationCount = formatCitationCount; this.WSB_M = WSB_M; this.WSB_MIN_MONTHS = WSB_MIN_MONTHS; this.WSB_MIN_CITATIONS = WSB_MIN_CITATIONS;', sandbox);
+const { poissonInterval68, chooseBinWidthMonths, computeRateSeries, hexToRgba, erf, normCdf, computeSmoothRateSeries, presentRateLabelPlugin, parseRecordIdentifier, computeBackoffDelayMs, cacheLoad, cacheSave, cacheEvictOldest, cacheKeys, safeLocalStorage, CACHE_PREFIX, CACHE_TTL_MS, CACHE_MAX_ENTRIES, bayesianBlocksEdges, computeBlocksRateSeries, BLOCKS_P0, spreadImpreciseDates, cacheRemoveOldVersions, normInv, wsbProfile, wsbFitCore, wsbFit, wsbSimulate, wsbBootstrap, wsbRateCurve, formatCitationCount, WSB_M, WSB_MIN_MONTHS, WSB_MIN_CITATIONS } = sandbox;
 
 // Deterministic PRNG (mulberry32) so stochastic checks are reproducible
 let __seed = 0xC0FFEE;
@@ -73,6 +73,10 @@ Math.random = function () {
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 };
+// The extracted code runs in its own vm context with its own Math object;
+// point it at the same deterministic PRNG so wsbSimulate/bootstrap are seeded
+sandbox.__outerRnd = Math.random;
+vm.runInContext('Math.random = __outerRnd;', sandbox);
 
 let failures = 0;
 function check(name, cond, detail) {
@@ -632,6 +636,76 @@ check('old cache versions removed, current and foreign keys kept', (() => {
     return st.getItem('inspire-citation-cache-v1:123') === null &&
         st.getItem(CACHE_PREFIX + '456') === 'current' && st.getItem('user-setting') === 'keep';
 })());
+
+// --- WSB model fit ---
+check('normInv accuracy', Math.abs(normInv(0.975) - 1.959964) < 1e-6 && Math.abs(normInv(0.5)) < 1e-9);
+check('normInv/normCdf roundtrip', [0.05, 0.2, 0.5, 0.8, 0.95].every(pv => Math.abs(normCdf(normInv(pv)) - pv) < 1e-4));
+check('formatCitationCount', formatCitationCount(842) === '842' && formatCitationCount(3400) === '3.4k' &&
+    formatCitationCount(3000) === '3k' && formatCitationCount(250000) === '250k');
+check('wsb guard: too few citations', wsbFit(new Array(30).fill(10), 120).ok === false);
+check('wsb guard: too young', wsbFit(new Array(200).fill(10), 36).ok === false);
+{
+    // Parameter recovery on a synthetic WSB process (mature paper)
+    const trueLam = 2.5, trueMu = Math.log(18), trueSig = 0.8, T = 120;
+    const sim = wsbSimulate(trueLam, trueMu, trueSig, T, 20000);
+    check('wsb simulate: sane event count', sim.ok && sim.times.length > 150 && sim.times.length < 600,
+        'N=' + sim.times.length);
+    const fit = wsbFit(sim.times, T);
+    check('wsb fit ok on synthetic data', fit.ok === true, JSON.stringify(fit));
+    if (fit.ok) {
+        check(`wsb recovers lambda ~ 2.5 (got ${fit.lambda.toFixed(2)})`, Math.abs(fit.lambda - trueLam) < 0.4);
+        check(`wsb recovers mu ~ ${trueMu.toFixed(2)} (got ${fit.mu.toFixed(2)})`, Math.abs(fit.mu - trueMu) < 0.4);
+        check(`wsb recovers sigma ~ 0.8 (got ${fit.sigma.toFixed(2)})`, Math.abs(fit.sigma - trueSig) < 0.3);
+        const trueCinf = WSB_M * Math.expm1(trueLam);
+        check(`wsb cinf within 40% of truth ${trueCinf.toFixed(0)} (got ${fit.cinf.toFixed(0)})`,
+            fit.cinf > 0.6 * trueCinf && fit.cinf < 1.6 * trueCinf);
+        check('wsb bootstrap interval sane', fit.lo !== undefined && fit.lo > 0 && fit.lo < fit.hi &&
+            fit.lo < fit.cinf * 1.2 && fit.hi > fit.cinf * 0.8, JSON.stringify([fit.lo, fit.cinf, fit.hi]));
+        // Model rate curve integrates back to the model cumulative
+        const curve = wsbRateCurve(fit, T, 400);
+        let integral = 0;
+        for (let i = 1; i < curve.length; i++) {
+            integral += (curve[i].y + curve[i - 1].y) / 2 * (curve[i].t - curve[i - 1].t) / 12;
+        }
+        const modelCT = WSB_M * Math.expm1(fit.lambda * normCdf((Math.log(T) - fit.mu) / fit.sigma));
+        check(`wsb rate curve integrates to c(T) (${integral.toFixed(0)} vs ${modelCT.toFixed(0)})`,
+            Math.abs(integral - modelCT) / modelCT < 0.06);
+        check('wsb curve positive', curve.every(pt => pt.y >= 0));
+    }
+}
+{
+    // Still-rising paper: extrapolation goes well beyond the observed count
+    const sim = wsbSimulate(4, Math.log(200), 0.8, 120, 20000);
+    if (sim.ok && sim.times.length >= WSB_MIN_CITATIONS) {
+        const fit = wsbFit(sim.times, 120);
+        check('wsb still-rising: cinf extrapolates beyond observed N',
+            fit.ok && fit.cinf > 1.5 * sim.times.length,
+            'N=' + sim.times.length + ' cinf=' + (fit.ok ? fit.cinf.toFixed(0) : 'n/a'));
+    } else {
+        check('wsb still-rising: simulation produced enough events', false, 'N=' + sim.times.length);
+    }
+}
+{
+    // Margin plugin renders the projection as a second line
+    const texts = [];
+    const mock = {
+        ctx: { save() {}, restore() {}, set fillStyle(v) {}, fillText: (t, x, y) => texts.push({ t, y }) },
+        chartArea: { top: 10, bottom: 400, right: 700 },
+        scales: { y: { getPixelForValue: v => 400 - v } },
+        isDatasetVisible: () => true,
+        data: { datasets: [
+            { label: 'A', borderColor: '#e41a1c', data: [{ y: 55, lo: 47, hi: 63 }],
+                wsbSummary: { ok: true, cinf: 3400, lo: 2800, hi: 4200 } },
+            { label: 'B', borderColor: '#377eb8', data: [{ y: 30, lo: 24, hi: 36 }],
+                wsbSummary: { ok: false, reason: 'too young' } }
+        ] }
+    };
+    presentRateLabelPlugin.afterDatasetsDraw(mock);
+    check('plugin: projection second line for fitted papers only', texts.length === 3 &&
+        texts.filter(a => a.t.indexOf('\u221e') === 0).length === 1, JSON.stringify(texts.map(a => a.t)));
+    const inf = texts.find(a => a.t.indexOf('\u221e') === 0);
+    check('plugin: projection format', !!inf && inf.t.indexOf('3.4k') > 0 && inf.t.indexOf('\u00b1') > 0, inf && inf.t);
+}
 
 console.log(failures === 0 ? '\nALL TESTS PASSED' : `\n${failures} TEST(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);
