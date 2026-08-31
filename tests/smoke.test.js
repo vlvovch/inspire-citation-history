@@ -227,12 +227,20 @@ document.addEventListener('DOMContentLoaded', () => {
         smokeLog('all datasets carry groupKey', cfgW.data.datasets.every(function (d) { return d.groupKey !== undefined; }));
         updateUrl();
         smokeLog('url carries wsb=true', location.search.indexOf('wsb=true') >= 0, location.search);
+        var summaryEl = document.getElementById('fit-summary');
+        smokeLog('fit summary visible in rate view with verdicts',
+            summaryEl.style.display === 'block' &&
+            summaryEl.querySelectorAll('.fit-summary-item').length === 2 &&
+            summaryEl.textContent.indexOf('needs at least') >= 0 &&
+            (summaryEl.textContent.indexOf('projected total') >= 0 || summaryEl.textContent.indexOf('no projection') >= 0),
+            summaryEl.textContent);
         document.getElementById('wsb-fit').checked = false;
         document.getElementById('wsb-fit').dispatchEvent(new Event('change'));
         var cfgW2 = window.__chartConfigs[window.__chartConfigs.length - 1];
         smokeLog('wsb overlay removed when unchecked',
             cfgW2.data.datasets.filter(function (d) { return d.label.indexOf('__wsb_') === 0; }).length === 0 &&
             location.search.indexOf('wsb=') < 0, location.search);
+        smokeLog('fit summary hidden when unchecked', document.getElementById('fit-summary').style.display === 'none');
 
         document.getElementById('show-rate').checked = false;
         updateChart();
@@ -250,6 +258,10 @@ document.addEventListener('DOMContentLoaded', () => {
             cfgCum.options.dataColors.length === 3 &&
             String(cfgCum.options.dataColors[2]).indexOf('rgba') === 0);
         smokeLog('wsb checkbox visible in cumulative view', document.getElementById('wsb-group').style.display === 'flex');
+        smokeLog('fit summary visible in cumulative view',
+            document.getElementById('fit-summary').style.display === 'block' &&
+            document.getElementById('fit-summary').querySelectorAll('.fit-summary-item').length === 2,
+            document.getElementById('fit-summary').textContent);
         updateUrl();
         smokeLog('wsb param kept in cumulative view', location.search.indexOf('wsb=true') >= 0, location.search);
         // Legend pruning on a synthetic chart.xkcd-style legend

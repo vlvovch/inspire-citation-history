@@ -697,6 +697,8 @@ check('wsb guard: too young', wsbFit(new Array(200).fill(10), 36).ok === false);
         check('wsb still-rising: fit ok but projection withheld (no turnover)',
             fit.ok === true && fit.reliable === false,
             'phiT=' + (fit.ok ? fit.phiT : 'n/a') + ' lambda=' + (fit.ok ? fit.lambda.toFixed(1) : 'n/a'));
+        check('wsb still-rising: refusal carries a reason',
+            fit.ok && typeof fit.why === 'string' && fit.why.length > 0, fit.why);
     } else {
         check('wsb still-rising: simulation produced enough events', false, 'N=' + sim.times.length);
     }
