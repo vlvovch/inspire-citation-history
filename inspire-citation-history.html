@@ -76,11 +76,16 @@
         }
         .chart-container {
             position: relative;
-            height: 100%;
             width: 70%;
+            aspect-ratio: 2 / 1;
             margin: auto auto;
             background: white;
-            /* padding: 20px 60px; */
+        }
+        @media (max-width: 900px) {
+            .chart-container {
+                width: 95%;
+                aspect-ratio: 3 / 2;
+            }
         }
         
         #chart {
@@ -1889,7 +1894,14 @@
                     }
                 };
 
-                // chart = new chartXkcd.Line(chartContainer, config);
+                // Match the rate view's plot box: size the SVG to the
+                // fixed-aspect container before chart.xkcd reads it
+                const box = chartContainer.parentElement.getBoundingClientRect();
+                if (box.width > 0) {
+                    chartContainer.setAttribute('width', Math.round(box.width));
+                    chartContainer.setAttribute('height', Math.round(box.height));
+                }
+
                 chart = new chartXkcd.XY(chartContainer, config);
             } catch (error) {
                 console.error('Error creating chart:', error);
@@ -2101,6 +2113,7 @@
                 plugins: [presentRateLabelPlugin],
                 options: {
                     responsive: true,
+                    maintainAspectRatio: false, // fill the fixed-aspect container
                     devicePixelRatio: 2,
                     animation: false,
                     layout: { padding: { right: 110 } },

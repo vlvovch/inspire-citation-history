@@ -79,6 +79,13 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('show-rate').checked = false;
         updateChart();
         smokeLog('cumulative view renders via chartXkcd', (window.__xkcdConfigs || []).length === 1);
+        var svgEl = document.getElementById('chart');
+        var svgW = parseInt(svgEl.getAttribute('width'), 10);
+        var svgH = parseInt(svgEl.getAttribute('height'), 10);
+        var expectAspect = window.innerWidth <= 900 ? 1.5 : 2; // media query below 900px
+        smokeLog('cumulative svg sized to the fixed-aspect container',
+            svgW > 0 && svgH > 0 && Math.abs(svgW / svgH - expectAspect) < 0.1,
+            svgW + 'x' + svgH + ' (viewport ' + window.innerWidth + ')');
         smokeLog('cumulative: svg shown, canvas hidden',
             document.getElementById('chart').style.display !== 'none' &&
             document.getElementById('rate-chart').style.display === 'none');
@@ -106,6 +113,7 @@ document.addEventListener('DOMContentLoaded', () => {
             smokeLog('smooth tooltip is terse value +- error', typeof lbl === 'string' && (lbl.indexOf('±') >= 0 || lbl.indexOf('+') >= 0) && !isNaN(parseFloat(lbl)) && lbl.indexOf('citations') < 0 && lbl.indexOf('n_eff') < 0, lbl);
             smokeLog('per-chart annotation plugin registered', Array.isArray(cfg.plugins) && cfg.plugins[0] && cfg.plugins[0].id === 'presentRateLabel');
             smokeLog('right margin reserved for labels', cfg.options.layout && cfg.options.layout.padding && cfg.options.layout.padding.right === 110);
+            smokeLog('rate view fills the shared container', cfg.options.maintainAspectRatio === false);
         }
         smokeLog('rate: canvas shown, svg hidden',
             document.getElementById('rate-chart').style.display === 'block' &&
