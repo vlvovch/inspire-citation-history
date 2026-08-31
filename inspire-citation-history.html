@@ -1117,7 +1117,13 @@
 
             const binMonths = binMonthsOverride > 0 ? binMonthsOverride :
                 chooseBinWidthMonths(offsets.length, spanMonths);
-            const nBins = Math.max(1, Math.ceil(spanMonths / binMonths));
+            let nBins = Math.max(1, Math.ceil(spanMonths / binMonths));
+            // When the span is (nearly) an exact multiple of the bin width the
+            // final bin degenerates to a sliver of almost zero exposure, giving
+            // absurd 0 +- huge rates; fold it into the previous bin instead
+            if (nBins > 1 && spanMonths - (nBins - 1) * binMonths < 0.5 * binMonths) {
+                nBins--;
+            }
             const counts = new Array(nBins).fill(0);
             for (const m of offsets) {
                 let idx = Math.floor(m / binMonths);

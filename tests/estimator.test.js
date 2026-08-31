@@ -154,6 +154,23 @@ const lastP = series2.points[series2.points.length - 1];
 // uniform 200 over 10.5 months -> ~19.05/month everywhere incl. the half-width last bin
 check(`last (half-width) bin rate ~ 229/yr (got ${lastP.y.toFixed(1)})`, Math.abs(lastP.y - 12 * 200 / 10.5) < 54);
 
+// --- Degenerate final sliver (regression: paper aged an exact multiple of the bin width) ---
+check('sliver folded: span 48.001 months, monthly bins -> 48 bins, sane errors', (() => {
+    const nowE = pub.getTime() + 48.001 * MS_PER_MONTH;
+    const s = computeRateSeries({ date: pub.toISOString(), citation_dates: dates }, 0, 1, nowE);
+    const last = s.points[s.points.length - 1];
+    return s.points.length === 48 && last.hi < 300;
+})());
+check('sliver folded: span 48 months + 1 ms, yearly bins -> 4 bins', (() => {
+    const nowE = pub.getTime() + 48 * MS_PER_MONTH + 1;
+    const s = computeRateSeries({ date: pub.toISOString(), citation_dates: dates }, 0, 12, nowE);
+    return s.points.length === 4 && s.points[3].hi < 400 && s.points[3].y > 0;
+})());
+check('half-width final bin still kept (10.5 months, monthly)', (() => {
+    const s = computeRateSeries(record2, 0, 1, nowMs2);
+    return s.points.length === 11;
+})());
+
 // --- Aligned modes ---
 const seriesM1 = computeRateSeries(record, 1, 0, nowMs);
 check('Mode 1 x in months (max ~47.5)', typeof seriesM1.points[0].x === 'number' && Math.abs(seriesM1.points[seriesM1.points.length - 1].x - 47.5) < 0.6);
