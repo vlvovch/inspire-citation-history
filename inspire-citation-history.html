@@ -218,7 +218,39 @@
         .export-button svg {
             margin-right: 8px;
         }
-    </style>
+    
+        /* ---------- Embed mode (?embed=1): chart only, for iframes ---------- */
+        body.embed h1,
+        body.embed .input-container,
+        body.embed .repo-list,
+        body.embed .align-checkbox,
+        body.embed .fit-summary,
+        body.embed .export-buttons,
+        body.embed .footer,
+        body.embed #debug-info {
+            display: none !important;
+        }
+        body.embed {
+            background: #fff;
+            margin: 0;
+            padding: 0;
+        }
+        body.embed .container {
+            max-width: none;
+            width: 100%;
+            margin: 0;
+            padding: 0;
+            border: 0;
+            box-shadow: none;
+            background: #fff;
+        }
+        body.embed .chart-container {
+            height: 100vh;
+            margin: 0;
+            padding: 0;
+            border: 0;
+        }
+</style>
 </head>
 <body>
     <div class="container">
@@ -335,6 +367,66 @@
             '#ff7f00', '#ffff33', '#a65628', '#f781bf'
         ];
         
+        // --------------------------------
+        // EMBED MODE (?embed=1)
+        // --------------------------------
+        // Chart-only rendering for iframes. The parent window receives a
+        // "stats" message after every render (per-record smooth-rate series
+        // and totals) and can switch views with
+        //   iframe.contentWindow.postMessage({type:'set', params:{rate:true}}, '*')
+        const EMBED = new URLSearchParams(window.location.search).get('embed') === '1';
+
+        function postEmbedMessage(payload) {
+            try {
+                window.parent.postMessage(Object.assign(
+                    { source: 'inspire-citation-history' }, payload), '*');
+            } catch (e) { /* ignore */ }
+        }
+
+        function postEmbedStats() {
+            if (!EMBED || window.parent === window) return;
+            const series = [];
+            Object.entries(recidData).forEach(([recid, data]) => {
+                const record = data.citation_record;
+                if (!record || !record.date) return;
+                const smooth = computeSmoothRateSeries(record, 0, 0);
+                series.push({
+                    recid: Number(recid),
+                    refname: record.refname || '',
+                    total: record.total_citations || record.citation_dates.length,
+                    widthMonths: smooth.widthMonths,
+                    points: smooth.points.map(p => ({
+                        t: p.x instanceof Date ? p.x.getTime() : new Date(p.x).getTime(),
+                        y: p.y, lo: p.lo, hi: p.hi, partial: !!p.partial
+                    }))
+                });
+            });
+            postEmbedMessage({ type: 'stats', series: series });
+        }
+
+        if (EMBED) {
+            document.body.classList.add('embed');
+            window.alert = function(msg) {
+                console.warn(msg);
+                postEmbedMessage({ type: 'error', message: String(msg) });
+            };
+            window.addEventListener('message', function(e) {
+                const d = e.data;
+                if (!d) return;
+                // Parents attach their listener after the iframe may have
+                // already rendered (hydration); "hello" re-posts the stats.
+                if (d.type === 'hello') {
+                    postEmbedStats();
+                    return;
+                }
+                if (d.type !== 'set' || !d.params) return;
+                if (typeof d.params.rate === 'boolean') {
+                    document.getElementById('show-rate').checked = d.params.rate;
+                    updateChart();
+                }
+            });
+        }
+
         let recidData = {};   // recid -> { dates: [array of date strings] }
         let chart = null;     // The chart.xkcd instance (either view)
         let chartData = null; // Global variable to store chart data for export
@@ -1965,6 +2057,7 @@
 
             if (showRate) {
                 renderRateChart(Mode);
+                postEmbedStats();
                 return;
             }
 
@@ -2072,6 +2165,7 @@
                 // chart.xkcd sizes the svg itself (parent width x 2/3), which
                 // matches the container's 3:2 aspect ratio
                 chart = new chartXkcd.XY(chartContainer, config);
+                postEmbedStats();
                 pruneFitLegendRows(chartContainer, cumulativeFitLabels);
             } catch (error) {
                 console.error('Error creating chart:', error);
