@@ -156,9 +156,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const dsK = cfgK.data.datasets[0];
         smokeLog('blocks: 3 datasets per paper', cfgK.data.datasets.length === 6, 'got ' + cfgK.data.datasets.length);
         smokeLog('blocks: rectangles without steps/markers', dsK.stepped === false && dsK.pointRadius === 0);
-        smokeLog('blocks: paired points with equal rates', dsK.data.length >= 2 && dsK.data.length % 2 === 0 &&
-            dsK.data.every(function (pt, i, a) { return i % 2 === 1 ? pt.y === a[i - 1].y : true; }));
-        smokeLog('blocks: few blocks for featureless data', dsK.data.length / 2 <= 4, 'blocks=' + dsK.data.length / 2);
+        smokeLog('blocks: dup points mirror block rates', dsK.data.length >= 2 &&
+            dsK.data.every(function (pt, i, a) { return !pt.dup || pt.y === a[i - 1].y; }));
+        var nBlocksK = dsK.data.filter(function (pt) { return !pt.dup; }).length;
+        smokeLog('blocks: few blocks for featureless data', nBlocksK >= 1 && nBlocksK <= 4, 'blocks=' + nBlocksK);
         smokeLog('blocks: width selector hidden', document.getElementById('bin-width-group').style.display === 'none');
         smokeLog('blocks: rateData estimator label', rateData[0].estimator === 'blocks');
         updateUrl();

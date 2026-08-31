@@ -418,15 +418,16 @@ const sampleRecord = { recid: 42, date: '2020-01-01', refname: 'X et al.', citat
 check('safeLocalStorage null outside the browser', safeLocalStorage() === null);
 
 // --- Bayesian blocks ---
-function blockCount(series) { return series.points.length / 2; }
+function blockCount(series) { return series.points.filter(p => !p.dup).length; }
 function blockEdgesFromSeries(series) { // Mode 1 -> numeric months
-    const e = [series.points[0].x];
-    for (let i = 1; i < series.points.length; i += 2) e.push(series.points[i].x);
+    const e = series.points.filter(p => !p.dup).map(p => p.x);
+    e.push(series.points[series.points.length - 1].x);
     return e;
 }
+function blockStarts(series) { return series.points.filter(p => !p.dup); }
 {
     const s = computeBlocksRateSeries(record, 1, nowMs);
-    const starts = s.points.filter((p, i) => i % 2 === 0);
+    const starts = blockStarts(s);
     const nTot = starts.reduce((a, p) => a + p.n, 0);
     check('blocks: counts sum to N', nTot === dates.length, nTot + ' vs ' + dates.length);
     check('blocks: constant rate -> 1-2 blocks', blockCount(s) >= 1 && blockCount(s) <= 2, 'got ' + blockCount(s));
@@ -434,9 +435,18 @@ function blockEdgesFromSeries(series) { // Mode 1 -> numeric months
     check(`blocks: width-weighted mean rate = 12N/T (${(12 * dates.length / 48).toFixed(1)})`,
         Math.abs(wmean - 12 * dates.length / 48) < 1.5, 'got ' + wmean.toFixed(1));
     check('blocks: spans [0, T]', Math.abs(s.points[0].x) < 1e-9 && Math.abs(s.points[s.points.length - 1].x - 48) < 1e-6);
-    check('blocks: pairs share y/n, dup on seconds, partial only last pair', s.points.every((p, i, a) =>
-        (i % 2 === 1 ? p.y === a[i - 1].y && p.n === a[i - 1].n && p.dup === true : p.dup === undefined) &&
-        (p.partial === (i >= a.length - 2))));
+    check('blocks: dup points mirror their block values', s.points.every((p, i, a) =>
+        !p.dup || (p.y === a[i - 1].y && p.n === a[i - 1].n)));
+    check('blocks: provisional dash confined to a short suffix', (() => {
+        const f = s.points.findIndex(p => p.partial);
+        if (f < 0) return false;
+        if (!s.points.slice(f).every(p => p.partial)) return false;
+        if (s.points.length - f > 2) return false;
+        const anchor = f > 0 ? s.points[f - 1].x : 0;
+        return s.points[s.points.length - 1].x - anchor <= 1.05;
+    })());
+    check('blocks: all block widths >= 1 month', starts.every(p => p.w >= 0.99),
+        JSON.stringify(starts.map(p => p.w)));
 }
 {
     // Step: 3/mo for 24 months, then 12/mo for another 24
@@ -463,7 +473,7 @@ function blockEdgesFromSeries(series) { // Mode 1 -> numeric months
     t = pub.getTime() + 20 * MS_PER_MONTH;
     for (;;) { t += -Math.log(1 - Math.random()) / 30 * MS_PER_MONTH; if (t > pub.getTime() + 24 * MS_PER_MONTH) break; burstDates.push(new Date(t).toISOString()); }
     const s = computeBlocksRateSeries({ date: pub.toISOString(), citation_dates: burstDates }, 1, nowMs);
-    const starts = s.points.filter((p, i) => i % 2 === 0);
+    const starts = blockStarts(s);
     const hot = starts.filter(p => p.y > 250);
     check('blocks: burst isolated as a high-rate block', blockCount(s) >= 3 && hot.length >= 1,
         'blocks=' + blockCount(s) + ' hot=' + hot.length);
@@ -474,11 +484,22 @@ function blockEdgesFromSeries(series) { // Mode 1 -> numeric months
 }
 check('blocks: empty record -> single zero block with upper limit', (() => {
     const s = computeBlocksRateSeries({ date: pub.toISOString(), citation_dates: [] }, 1, nowMs);
-    return blockCount(s) === 1 && s.points[0].y === 0 && s.points[0].hi > 0 && s.points[0].partial === true;
+    return blockCount(s) === 1 && s.points[0].y === 0 && s.points[0].hi > 0 &&
+        s.points[s.points.length - 1].partial === true;
 })());
 check('blocks: single citation -> single block n=1', (() => {
     const s = computeBlocksRateSeries({ date: pub.toISOString(), citation_dates: ['2021-06-01'] }, 1, nowMs);
     return blockCount(s) === 1 && s.points[0].n === 1;
+})());
+check('blocks: clamped pileup capped by the minimum block width', (() => {
+    // 30 citations clamped to t=0 (dates before publication) plus a modest tail:
+    // must not produce a hairline block with an absurd rate
+    const pileDates = [];
+    for (let i = 0; i < 30; i++) pileDates.push('2019-06-01');
+    for (let i = 0; i < 100; i++) pileDates.push(new Date(pub.getTime() + Math.random() * 40 * MS_PER_MONTH).toISOString());
+    const s = computeBlocksRateSeries({ date: pub.toISOString(), citation_dates: pileDates }, 1, pub.getTime() + 40 * MS_PER_MONTH);
+    const starts = blockStarts(s);
+    return starts.every(p => p.w >= 0.99) && Math.max(...starts.map(p => p.y)) < 700;
 })());
 check('blocks: Mode 0 x values are Dates', (() => {
     const s = computeBlocksRateSeries(record, 0, nowMs);
@@ -489,7 +510,7 @@ check('blocks: weekly quantization path preserves counts', (() => {
     for (let i = 0; i < 6000; i++) many.push(new Date(pub.getTime() + Math.random() * 250 * MS_PER_MONTH).toISOString());
     const nowBig = pub.getTime() + 250 * MS_PER_MONTH;
     const s = computeBlocksRateSeries({ date: pub.toISOString(), citation_dates: many }, 1, nowBig);
-    return s.points.filter((p, i) => i % 2 === 0).reduce((a, p) => a + p.n, 0) === 6000;
+    return blockStarts(s).reduce((a, p) => a + p.n, 0) === 6000;
 })());
 check('bayesianBlocksEdges: no events -> [0, T]', JSON.stringify(bayesianBlocksEdges([], 10, BLOCKS_P0)) === '[0,10]');
 

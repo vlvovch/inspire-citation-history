@@ -1211,6 +1211,10 @@
         }
 
         const BLOCKS_P0 = 0.05; // false-alarm probability per change point
+        const BLOCKS_MIN_WIDTH_MONTHS = 1; // change-point resolution floor:
+        // prevents hairline blocks (e.g. the announcement burst plus citations
+        // clamped to t=0) whose tiny exposure produces absurd rates
+        const BLOCKS_TAIL_MONTHS = 1; // provisional (dashed) tail near the present
 
         // Bayesian Blocks (Scargle et al. 2013, ApJ 764, 167): globally optimal
         // piecewise-constant segmentation of event times via dynamic programming,
@@ -1234,10 +1238,9 @@
                     weights.push(1);
                 }
             }
-            // The DP below is O(M^2) in the number of distinct times; quantize
-            // to a weekly grid for very long histories (negligible information
-            // loss at the block scale)
-            if (ticks.length > 2000) {
+            // Quantize to a weekly grid: bounds the O(M^2) DP below and is far
+            // below the one-month change-point resolution anyway
+            {
                 const WEEK_MONTHS = 7 * 12 / 365.25;
                 const merged = new Map();
                 for (let j = 0; j < ticks.length; j++) {
@@ -1271,6 +1274,11 @@
                     const nk = cumw[q + 1] - cumw[r];
                     const tk = edges[q + 1] - edges[r];
                     if (!(tk > 0)) continue;
+                    // Enforce the minimum block width inside the DP (prefixes
+                    // that cannot be partitioned stay at -Infinity and are
+                    // never selected); a span shorter than the minimum still
+                    // yields the single whole-span block via the backtrack
+                    if (tk < BLOCKS_MIN_WIDTH_MONTHS) continue;
                     const val = nk * (Math.log(nk) - Math.log(tk)) - ncpPrior +
                         (r > 0 ? best[r - 1] : 0);
                     if (val > bestVal) {
@@ -1329,11 +1337,22 @@
                     lo: 12 * interval[0] / width,
                     hi: 12 * interval[1] / width,
                     n: n,
-                    w: Math.round(width * 100) / 100,
-                    partial: isLast // block containing the present
+                    w: Math.round(width * 100) / 100
                 };
-                points.push(Object.assign({ x: rateXValue(pubDate, start, Mode) }, common));
-                points.push(Object.assign({ x: rateXValue(pubDate, end, Mode), dup: true }, common));
+                // Only the last ~month before the present is provisional
+                // (indexing lag), so confine the dashed tail to it instead of
+                // dashing a possibly years-wide current block
+                if (!isLast) {
+                    points.push(Object.assign({ x: rateXValue(pubDate, start, Mode), partial: false }, common));
+                    points.push(Object.assign({ x: rateXValue(pubDate, end, Mode), dup: true, partial: false }, common));
+                } else if (width <= BLOCKS_TAIL_MONTHS) {
+                    points.push(Object.assign({ x: rateXValue(pubDate, start, Mode), partial: true }, common));
+                    points.push(Object.assign({ x: rateXValue(pubDate, end, Mode), dup: true, partial: true }, common));
+                } else {
+                    points.push(Object.assign({ x: rateXValue(pubDate, start, Mode), partial: false }, common));
+                    points.push(Object.assign({ x: rateXValue(pubDate, end - BLOCKS_TAIL_MONTHS, Mode), dup: true, partial: false }, common));
+                    points.push(Object.assign({ x: rateXValue(pubDate, end, Mode), dup: true, partial: true }, common));
+                }
             }
             return { points: points, widthMonths: '' };
         }
