@@ -38,6 +38,12 @@ if (backoffStart < 0 || backoffEnd < 0 || backoffEnd <= backoffStart) {
     console.error('FAIL: could not locate backoff helper');
     process.exit(1);
 }
+const cacheStart = scriptBody.indexOf('const CACHE_PREFIX');
+const cacheEnd = scriptBody.indexOf('// Cache-aware wrapper');
+if (cacheStart < 0 || cacheEnd < 0 || cacheEnd <= cacheStart) {
+    console.error('FAIL: could not locate cache helpers');
+    process.exit(1);
+}
 const idStart = scriptBody.indexOf('function parseRecordIdentifier');
 const idEnd = scriptBody.indexOf('async function resolveIdentifierToRecid');
 if (idStart < 0 || idEnd < 0 || idEnd <= idStart) {
@@ -46,11 +52,12 @@ if (idStart < 0 || idEnd < 0 || idEnd <= idStart) {
 }
 const section = scriptBody.slice(sectionStart, sectionEnd)
     .replace(/^\s*\/\/ -+\s*$/gm, '') + '\n' + scriptBody.slice(pluginStart, pluginEnd)
-    + '\n' + scriptBody.slice(idStart, idEnd) + '\n' + scriptBody.slice(backoffStart, backoffEnd);
+    + '\n' + scriptBody.slice(idStart, idEnd) + '\n' + scriptBody.slice(backoffStart, backoffEnd)
+    + '\n' + scriptBody.slice(cacheStart, cacheEnd);
 const sandbox = {};
 vm.createContext(sandbox);
-vm.runInContext(section + '\nthis.poissonInterval68 = poissonInterval68; this.chooseBinWidthMonths = chooseBinWidthMonths; this.computeRateSeries = computeRateSeries; this.hexToRgba = hexToRgba; this.erf = erf; this.normCdf = normCdf; this.computeSmoothRateSeries = computeSmoothRateSeries; this.presentRateLabelPlugin = presentRateLabelPlugin; this.parseRecordIdentifier = parseRecordIdentifier; this.computeBackoffDelayMs = computeBackoffDelayMs;', sandbox);
-const { poissonInterval68, chooseBinWidthMonths, computeRateSeries, hexToRgba, erf, normCdf, computeSmoothRateSeries, presentRateLabelPlugin, parseRecordIdentifier, computeBackoffDelayMs } = sandbox;
+vm.runInContext(section + '\nthis.poissonInterval68 = poissonInterval68; this.chooseBinWidthMonths = chooseBinWidthMonths; this.computeRateSeries = computeRateSeries; this.hexToRgba = hexToRgba; this.erf = erf; this.normCdf = normCdf; this.computeSmoothRateSeries = computeSmoothRateSeries; this.presentRateLabelPlugin = presentRateLabelPlugin; this.parseRecordIdentifier = parseRecordIdentifier; this.computeBackoffDelayMs = computeBackoffDelayMs; this.cacheLoad = cacheLoad; this.cacheSave = cacheSave; this.cacheEvictOldest = cacheEvictOldest; this.cacheKeys = cacheKeys; this.safeLocalStorage = safeLocalStorage; this.CACHE_PREFIX = CACHE_PREFIX; this.CACHE_TTL_MS = CACHE_TTL_MS; this.CACHE_MAX_ENTRIES = CACHE_MAX_ENTRIES;', sandbox);
+const { poissonInterval68, chooseBinWidthMonths, computeRateSeries, hexToRgba, erf, normCdf, computeSmoothRateSeries, presentRateLabelPlugin, parseRecordIdentifier, computeBackoffDelayMs, cacheLoad, cacheSave, cacheEvictOldest, cacheKeys, safeLocalStorage, CACHE_PREFIX, CACHE_TTL_MS, CACHE_MAX_ENTRIES } = sandbox;
 
 // Deterministic PRNG (mulberry32) so stochastic checks are reproducible
 let __seed = 0xC0FFEE;
@@ -330,6 +337,68 @@ check('numeric Retry-After honored', computeBackoffDelayMs(0, '7') === 7000);
 check('date-form Retry-After ignored', computeBackoffDelayMs(2, 'Wed, 21 Oct 2026 07:28:00 GMT') === 8000);
 check('absurd Retry-After ignored', computeBackoffDelayMs(0, '9999') === 2000);
 check('zero Retry-After ignored', computeBackoffDelayMs(1, '0') === 4000);
+
+// --- localStorage citation cache ---
+function makeFakeStorage(maxEntries) {
+    const map = new Map();
+    return {
+        get length() { return map.size; },
+        key: (i) => Array.from(map.keys())[i] !== undefined ? Array.from(map.keys())[i] : null,
+        getItem: (k) => map.has(k) ? map.get(k) : null,
+        setItem: (k, v) => {
+            if (maxEntries && !map.has(k) && map.size >= maxEntries) {
+                throw new Error('QuotaExceededError');
+            }
+            map.set(k, String(v));
+        },
+        removeItem: (k) => { map.delete(k); }
+    };
+}
+const sampleRecord = { recid: 42, date: '2020-01-01', refname: 'X et al.', citation_dates: ['2021-01-01'], total_citations: 1 };
+{
+    const st = makeFakeStorage();
+    cacheSave(st, 42, sampleRecord, 1000);
+    const hit = cacheLoad(st, 42, 2000);
+    check('cache roundtrip fresh', !!hit && hit.fresh && hit.record.refname === 'X et al.' && hit.record.citation_dates.length === 1);
+    const stale = cacheLoad(st, 42, 1000 + CACHE_TTL_MS + 1);
+    check('cache stale after TTL', !!stale && !stale.fresh);
+    check('cache miss returns null', cacheLoad(st, 99, 2000) === null);
+    const future = cacheLoad(st, 42, 0); // savedAt in the future -> not fresh
+    check('future savedAt treated as stale', !!future && !future.fresh);
+}
+{
+    const st = makeFakeStorage();
+    st.setItem(CACHE_PREFIX + '7', 'not json{');
+    check('corrupt entry -> null and removed', cacheLoad(st, 7, 1000) === null && st.getItem(CACHE_PREFIX + '7') === null);
+    st.setItem(CACHE_PREFIX + '8', JSON.stringify({ savedAt: 1, record: { citation_dates: 'nope' } }));
+    check('malformed record -> null and removed', cacheLoad(st, 8, 1000) === null && st.getItem(CACHE_PREFIX + '8') === null);
+}
+{
+    // Quota: capacity 3; oldest evicted to make room, newest survives
+    const st = makeFakeStorage(3);
+    cacheSave(st, 1, sampleRecord, 1000);
+    cacheSave(st, 2, sampleRecord, 2000);
+    cacheSave(st, 3, sampleRecord, 3000);
+    cacheSave(st, 4, sampleRecord, 4000);
+    check('quota eviction keeps newest', cacheLoad(st, 4, 4000) !== null, 'len=' + st.length);
+    check('quota eviction removed oldest', cacheLoad(st, 1, 4000) === null);
+}
+{
+    // Entry cap: never more than CACHE_MAX_ENTRIES cache keys
+    const st = makeFakeStorage();
+    for (let i = 0; i < CACHE_MAX_ENTRIES + 5; i++) cacheSave(st, i, sampleRecord, 1000 + i);
+    check('entry cap enforced', cacheKeys(st).length === CACHE_MAX_ENTRIES, 'got ' + cacheKeys(st).length);
+    check('cap evicts oldest first', cacheLoad(st, 0, 2000) === null && cacheLoad(st, CACHE_MAX_ENTRIES + 4, 2000) !== null);
+}
+{
+    // Foreign keys are never touched
+    const st = makeFakeStorage();
+    st.setItem('user-setting', 'keep-me');
+    for (let i = 0; i < CACHE_MAX_ENTRIES + 5; i++) cacheSave(st, i, sampleRecord, 1000 + i);
+    cacheEvictOldest(st, 1000);
+    check('foreign keys untouched by eviction', st.getItem('user-setting') === 'keep-me' && cacheKeys(st).length === 0);
+}
+check('safeLocalStorage null outside the browser', safeLocalStorage() === null);
 
 console.log(failures === 0 ? '\nALL TESTS PASSED' : `\n${failures} TEST(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

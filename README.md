@@ -65,7 +65,7 @@ The application is built as a single HTML file with embedded JavaScript that:
 - Processes the raw citation data into time series format
 - Visualizes the data using the chart.xkcd library for a hand-drawn aesthetic
 
-**Note on Performance**: Citation records are retrieved 500 at a time, requesting only the citation dates (`fields=earliest_date`), which keeps responses small and loading fast even for highly cited papers. All API calls share a rate limiter that stays below INSPIRE's limit of 15 requests per 5-second window, and requests are automatically retried with exponential backoff on rate-limit (429) or server errors, so loading many papers at once should slow down gracefully rather than halt.
+**Note on Performance**: Citation records are retrieved 500 at a time, requesting only the citation dates (`fields=earliest_date`), which keeps responses small and loading fast even for highly cited papers. All API calls share a rate limiter that stays below INSPIRE's limit of 15 requests per 5-second window, and requests are automatically retried with exponential backoff on rate-limit (429) or server errors, so loading many papers at once should slow down gracefully rather than halt. Fetched citation data is additionally cached in the browser's localStorage for 24 hours: recently viewed papers and shared links render instantly, and stale entries are refreshed in the background.
 
 ### Testing
 
@@ -73,7 +73,7 @@ The `tests/` directory contains a plain-Node test suite (no dependencies to inst
 
 ## Potential Future Improvements
 
-- [ ] Improve performance by caching citation data
+- [x] Improve performance by caching citation data
 - [x] Optimize API calls (slim responses, larger pages, request pacing)
 - [ ] Customize chart appearance (colors, line styles)
 - [x] Add support for arXiv and/or DOI identifiers

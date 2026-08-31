@@ -170,6 +170,23 @@ document.addEventListener('DOMContentLoaded', () => {
         const pRec = parseRecordIdentifier('https://inspirehep.net/literature/2178285');
         smokeLog('parser: INSPIRE url', !!pRec && pRec.type === 'recid' && pRec.value === '2178285');
         smokeLog('parser: garbage rejected', parseRecordIdentifier('hello world') === null);
+
+        // Citation cache wired into the page
+        var fakeMap = new Map();
+        var fakeStore = {
+            getItem: function (k) { return fakeMap.has(k) ? fakeMap.get(k) : null; },
+            setItem: function (k, v) { fakeMap.set(k, String(v)); },
+            removeItem: function (k) { fakeMap.delete(k); },
+            key: function (i) { var ks = Array.from(fakeMap.keys()); return i < ks.length ? ks[i] : null; }
+        };
+        Object.defineProperty(fakeStore, 'length', { get: function () { return fakeMap.size; } });
+        var rec = { recid: 5, date: '2020-01-01', refname: 'R', citation_dates: ['2021-02-03'], total_citations: 1 };
+        cacheSave(fakeStore, 5, rec, 1000);
+        var hit = cacheLoad(fakeStore, 5, 2000);
+        smokeLog('cache roundtrip in page context', !!hit && hit.fresh && hit.record.refname === 'R');
+        var stale = cacheLoad(fakeStore, 5, 1000 + CACHE_TTL_MS + 1);
+        smokeLog('cache stale detection in page context', !!stale && !stale.fresh);
+        smokeLog('cached fetch wrapper defined', typeof citations_for_plot_cached === 'function' && typeof revalidateCachedRecord === 'function');
         updateUrl();
         smokeLog('rate params removed from url', location.search.indexOf('rate=') < 0 && location.search.indexOf('bin=') < 0, location.search);
     } catch (err) {

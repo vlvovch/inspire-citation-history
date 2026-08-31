@@ -508,6 +508,144 @@
         }
 
         // --------------------------------
+        // CITATION CACHE
+        // --------------------------------
+        // Fetched citation records are cached in localStorage for a day:
+        // a fresh entry skips the API entirely, a stale one renders
+        // immediately and is refreshed in the background. All storage
+        // access degrades silently when localStorage is unavailable.
+
+        const CACHE_PREFIX = 'inspire-citation-cache-v1:';
+        const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+        const CACHE_MAX_ENTRIES = 50;
+
+        function safeLocalStorage() {
+            try {
+                if (typeof localStorage === 'undefined' || !localStorage) return null;
+                const probe = CACHE_PREFIX + '__probe__';
+                localStorage.setItem(probe, '1');
+                localStorage.removeItem(probe);
+                return localStorage;
+            } catch (e) {
+                return null;
+            }
+        }
+
+        function cacheKeys(storage) {
+            const keys = [];
+            for (let i = 0; i < storage.length; i++) {
+                const key = storage.key(i);
+                if (key && key.indexOf(CACHE_PREFIX) === 0) keys.push(key);
+            }
+            return keys;
+        }
+
+        // Returns {record, fresh} or null; removes corrupt entries
+        function cacheLoad(storage, recid, nowMs) {
+            const key = CACHE_PREFIX + recid;
+            try {
+                const raw = storage.getItem(key);
+                if (!raw) return null;
+                const entry = JSON.parse(raw);
+                if (!entry || !entry.record || !Array.isArray(entry.record.citation_dates)) {
+                    storage.removeItem(key);
+                    return null;
+                }
+                const age = (nowMs || Date.now()) - (entry.savedAt || 0);
+                return { record: entry.record, fresh: age >= 0 && age < CACHE_TTL_MS };
+            } catch (e) {
+                try { storage.removeItem(key); } catch (e2) { /* ignore */ }
+                return null;
+            }
+        }
+
+        function cacheEvictOldest(storage, count) {
+            const entries = cacheKeys(storage).map(key => {
+                let savedAt = 0;
+                try { savedAt = (JSON.parse(storage.getItem(key)) || {}).savedAt || 0; } catch (e) { /* evict first */ }
+                return { key: key, savedAt: savedAt };
+            }).sort((a, b) => a.savedAt - b.savedAt);
+            for (let i = 0; i < Math.min(count, entries.length); i++) {
+                try { storage.removeItem(entries[i].key); } catch (e) { /* ignore */ }
+            }
+        }
+
+        function cacheSave(storage, recid, record, nowMs) {
+            const key = CACHE_PREFIX + recid;
+            const payload = JSON.stringify({ savedAt: nowMs || Date.now(), record: record });
+            for (let attempt = 0; attempt < 4; attempt++) {
+                try {
+                    storage.setItem(key, payload);
+                    break;
+                } catch (e) {
+                    // Quota exceeded: evict the oldest quarter and retry;
+                    // give up quietly if nothing can be evicted
+                    const before = cacheKeys(storage).length;
+                    cacheEvictOldest(storage, Math.max(1, Math.ceil(before / 4)));
+                    if (cacheKeys(storage).length === before) return;
+                }
+            }
+            const excess = cacheKeys(storage).length - CACHE_MAX_ENTRIES;
+            if (excess > 0) cacheEvictOldest(storage, excess);
+        }
+
+        // Cache-aware wrapper around citations_for_plot
+        const cacheRevalidating = new Set();
+
+        async function citations_for_plot_cached(recid, progressCallback) {
+            const storage = safeLocalStorage();
+            const cached = storage ? cacheLoad(storage, recid) : null;
+            if (cached) {
+                logDebug(`Cache ${cached.fresh ? 'hit' : 'hit (stale, refreshing)'} for recid ${recid}`);
+                if (progressCallback) {
+                    const n = cached.record.citation_dates.length;
+                    progressCallback(n, n);
+                }
+                if (!cached.fresh) {
+                    revalidateCachedRecord(recid);
+                }
+                return [cached.record];
+            }
+            const result = await citations_for_plot(recid, progressCallback);
+            if (result.length > 0 && storage) {
+                cacheSave(storage, recid, result[0]);
+            }
+            return result;
+        }
+
+        // Refetch a stale record in the background; update the cache, the
+        // chart, and the record tag if the paper is still on display
+        function revalidateCachedRecord(recid) {
+            if (cacheRevalidating.has(recid)) return;
+            cacheRevalidating.add(recid);
+            (async () => {
+                try {
+                    const result = await citations_for_plot(recid, null);
+                    if (result.length === 0) return;
+                    const storage = safeLocalStorage();
+                    if (storage) {
+                        cacheSave(storage, recid, result[0]);
+                    }
+                    if (recidData[recid] && recidData[recid].citation_record) {
+                        recidData[recid].citation_record = result[0];
+                        updateChart();
+                        const closeButton = document.querySelector(`.repo-tag .close[data-recid="${recid}"]`);
+                        if (closeButton && closeButton.parentElement) {
+                            closeButton.parentElement.innerHTML = `
+                                <span class="repo-tag-content" onclick="window.open('https://inspirehep.net/literature/${recid}', '_blank')">${result[0].refname || `recid:${recid}`}</span>
+                                <span class="close" data-recid="${recid}">×</span>
+                            `;
+                        }
+                    }
+                } catch (error) {
+                    console.error(`Background refresh failed for recid ${recid}:`, error);
+                } finally {
+                    cacheRevalidating.delete(recid);
+                }
+            })();
+        }
+
+        // --------------------------------
         // FETCHING CITATION DATES
         // --------------------------------
 
@@ -759,7 +897,7 @@
                 };
                 
                 // Get citation data directly from INSPIRE-HEP API
-                const result = await citations_for_plot(recid, progressCallback);
+                const result = await citations_for_plot_cached(recid, progressCallback);
                 
                 if (!result || result.length === 0) {
                     console.error(`No citation data returned for recid: ${recid}`);
@@ -792,7 +930,7 @@
         async function fetchCitationDatesWithoutLoadingUI(recid, progressCallback) {
             try {
                 // Get citation data directly from INSPIRE-HEP API
-                const result = await citations_for_plot(recid, progressCallback);
+                const result = await citations_for_plot_cached(recid, progressCallback);
                 
                 if (!result || result.length === 0) {
                     console.error(`No citation data returned for recid: ${recid}`);
