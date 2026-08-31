@@ -426,10 +426,9 @@
         async function resolveIdentifierToRecid(parsed) {
             const endpoint = parsed.type === 'arxiv' ? 'arxiv' : 'doi';
             const url = `https://inspirehep.net/api/${endpoint}/` +
-                (parsed.type === 'doi' ? encodeURI(parsed.value) : parsed.value);
-            const response = await fetch(url, {
-                headers: { "Accept": "application/json" }
-            });
+                (parsed.type === 'doi' ? encodeURI(parsed.value) : parsed.value) +
+                '?fields=control_number';
+            const response = await inspireFetch(url);
             if (!response.ok) {
                 throw new Error(response.status === 404 ? 'record not found' : `HTTP ${response.status}`);
             }
@@ -442,21 +441,88 @@
         }
 
         // --------------------------------
+        // INSPIRE API ACCESS
+        // --------------------------------
+        // INSPIRE enforces 15 requests per 5-second window. All API calls go
+        // through inspireFetch, which paces concurrent record loads through a
+        // shared rolling window and retries on 429/5xx with backoff.
+
+        const INSPIRE_RATE_WINDOW_MS = 5000;
+        const INSPIRE_RATE_MAX_REQUESTS = 12; // stay below the 15/5s limit
+        const inspireRequestTimes = [];
+
+        function sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+
+        // Wait for a free request slot in the rolling rate-limit window
+        async function inspireThrottle() {
+            for (;;) {
+                const now = Date.now();
+                while (inspireRequestTimes.length > 0 &&
+                       now - inspireRequestTimes[0] > INSPIRE_RATE_WINDOW_MS) {
+                    inspireRequestTimes.shift();
+                }
+                if (inspireRequestTimes.length < INSPIRE_RATE_MAX_REQUESTS) {
+                    inspireRequestTimes.push(now);
+                    return;
+                }
+                await sleep(inspireRequestTimes[0] + INSPIRE_RATE_WINDOW_MS - now + 50);
+            }
+        }
+
+        // Delay before retry attempt (0-based): honor a sane numeric
+        // Retry-After header, else exponential 2s/4s/8s/... capped at 30s
+        function computeBackoffDelayMs(attempt, retryAfterHeader) {
+            const retryAfter = parseInt(retryAfterHeader);
+            if (retryAfter > 0 && retryAfter <= 120) {
+                return retryAfter * 1000;
+            }
+            return Math.min(2000 * Math.pow(2, attempt), 30000);
+        }
+
+        // fetch() with rate-limit pacing and automatic retries on 429/5xx
+        // and network errors; other statuses are returned to the caller
+        async function inspireFetch(url, maxRetries = 4) {
+            for (let attempt = 0; ; attempt++) {
+                await inspireThrottle();
+                let response = null;
+                try {
+                    response = await fetch(url, {
+                        headers: { "Accept": "application/json" }
+                    });
+                } catch (networkError) {
+                    if (attempt >= maxRetries) throw networkError;
+                }
+                if (response) {
+                    const retryable = response.status === 429 || response.status >= 500;
+                    if (!retryable || attempt >= maxRetries) {
+                        return response;
+                    }
+                }
+                const delay = computeBackoffDelayMs(attempt,
+                    response ? response.headers.get('Retry-After') : null);
+                logDebug(`INSPIRE API ${response ? 'HTTP ' + response.status : 'network error'}, retrying in ${delay / 1000}s`);
+                await sleep(delay);
+            }
+        }
+
+        // --------------------------------
         // FETCHING CITATION DATES
         // --------------------------------
-        
-        // Helper function to get record information from INSPIRE-HEP API
+
+        // Helper function to get record information from INSPIRE-HEP API.
+        // Only the metadata fields used for the reference string are requested.
         async function get_recid_info(recid) {
             try {
-                const url = `https://inspirehep.net/api/literature/${recid}`;
-                const response = await fetch(url, {
-                    headers: { "Accept": "application/json" }
-                });
-                
+                const url = `https://inspirehep.net/api/literature/${recid}` +
+                    `?fields=titles,authors,publication_info,collaborations,arxiv_eprints,preprint_date`;
+                const response = await inspireFetch(url);
+
                 if (!response.ok) {
                     throw new Error(`Failed to fetch record info: ${response.statusText}`);
                 }
-                
+
                 return await response.json();
             } catch (error) {
                 console.error(`Error fetching data from INSPIRE-HEP API: ${error}`);
@@ -553,15 +619,16 @@
         // Get citations for a given record ID
         async function get_citations_by_recid(recid, size = 500, page = 1) {
             try {
-                const url = `https://inspirehep.net/api/literature?q=refersto:recid:${recid}&size=${size}&page=${page}`;
-                const response = await fetch(url, {
-                    headers: { "Accept": "application/json" }
-                });
-                
+                // Only the citation dates are needed downstream, so request
+                // just earliest_date: responses shrink by orders of magnitude
+                const url = `https://inspirehep.net/api/literature?q=refersto:recid:${recid}` +
+                    `&size=${size}&page=${page}&fields=earliest_date`;
+                const response = await inspireFetch(url);
+
                 if (!response.ok) {
                     throw new Error(`Failed to fetch citations: ${response.statusText}`);
                 }
-                
+
                 return await response.json();
             } catch (error) {
                 console.error(`Error fetching citations from INSPIRE-HEP API: ${error}`);
@@ -614,7 +681,7 @@
             try {
                 let allCitations = [];
                 let page = 1;
-                const pageSize = 250;
+                const pageSize = 500; // API maximum is 1000; slimmed responses make larger pages cheap
                 let totalRecords = 0;
                 let processedRecords = 0;
                 let hasMorePages = true;
@@ -656,9 +723,6 @@
                     }
                     
                     page++;
-                    
-                    // Small delay to avoid overwhelming the API
-                    await new Promise(resolve => setTimeout(resolve, 300));
                 }
                 
                 // Get record info for formatting

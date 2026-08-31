@@ -65,14 +65,19 @@ The application is built as a single HTML file with embedded JavaScript that:
 - Processes the raw citation data into time series format
 - Visualizes the data using the chart.xkcd library for a hand-drawn aesthetic
 
-**Note on Performance**: Due to the limitations of the API, the web application will retrieve up to 250 citation records at a time for each paper. This can cause some delay for large numbers of citations. Please be patient while the charts are loading. Sometimes the process will halt, especially if you are adding many papers at once. There is also rate limiting enforced by INSPIRE API (15 requests per 5 second window)
+**Note on Performance**: Citation records are retrieved 500 at a time, requesting only the citation dates (`fields=earliest_date`), which keeps responses small and loading fast even for highly cited papers. All API calls share a rate limiter that stays below INSPIRE's limit of 15 requests per 5-second window, and requests are automatically retried with exponential backoff on rate-limit (429) or server errors, so loading many papers at once should slow down gracefully rather than halt.
+
+### Testing
+
+The `tests/` directory contains a plain-Node test suite (no dependencies to install): `estimator.test.js` validates the citation-rate estimators against exact Poisson intervals and Monte Carlo synthetic data, along with the record identifier parser and API retry backoff; `smoke.test.js` loads the page in headless Chrome/Chromium (auto-detected, override with `CHROME_BIN`) with stubbed chart libraries to check the UI wiring. Both run in CI on every push via GitHub Actions.
 
 ## Potential Future Improvements
 
-- [ ] Improve performance by caching citation data and/or optimizing API calls
+- [ ] Improve performance by caching citation data
+- [x] Optimize API calls (slim responses, larger pages, request pacing)
 - [ ] Customize chart appearance (colors, line styles)
 - [x] Add support for arXiv and/or DOI identifiers
-- [ ] Implement better error handling for API rate limits
+- [x] Implement better error handling for API rate limits
 - [ ] Utilizing other citation databases
 
 
