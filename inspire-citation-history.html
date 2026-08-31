@@ -2200,19 +2200,18 @@
             // Blank zone to the right of the curves for the present-rate
             // labels: chart.xkcd's right margin is a fixed 30px, so the room
             // is made inside the plot by padding the x-domain with a single
-            // invisible point (its y sits at the existing minimum so the
-            // y-scale is untouched)
-            let xMin = Infinity, xMax = -Infinity, yMin = Infinity;
+            // invisible point. Its y of zero also pins the y-axis to start
+            // at zero (chart.xkcd otherwise starts at the data minimum).
+            let xMin = Infinity, xMax = -Infinity;
             datasets.forEach(ds => ds.data.forEach(q => {
                 const v = Mode === 0 ? q.x.getTime() : q.x;
                 if (v < xMin) xMin = v;
                 if (v > xMax) xMax = v;
-                if (q.y < yMin) yMin = q.y;
             }));
             const plotW = Math.max((chartContainer.parentElement.clientWidth || 600) - 100, 220);
             const padFrac = Math.min(0.4, 110 / plotW);
             const padX = xMax + Math.max(xMax - xMin, 1) * padFrac / (1 - padFrac);
-            datasets.push({ label: '', data: [{ x: Mode === 0 ? new Date(padX) : padX, y: yMin }] });
+            datasets.push({ label: '', data: [{ x: Mode === 0 ? new Date(padX) : padX, y: 0 }] });
             dataColors.push('rgba(0,0,0,0)');
             helperLabels.push('');
             plan.push({ kind: 'pad' });
@@ -2228,7 +2227,11 @@
                         yTickCount: 5,
                         legendPosition: chartXkcd.config.positionType.upLeft,
                         showLine: true,
-                        dotSize: 0.5,
+                        // Invisible dots: the estimate is a curve, not events.
+                        // The zero-radius circles still carry every point's
+                        // rendered position, which decorateRateChart uses for
+                        // the labels and the hover tooltip.
+                        dotSize: 0,
                         dataColors: dataColors,
                         timeFormat: Mode !== 0 ? '' : 'MMM D, YYYY'
                     }
@@ -2293,39 +2296,32 @@
                     graphG.insertBefore(fill, lines[0]);
                 });
 
-                // Per-dataset styling: hide the band edges and the padding
-                // point, dash the provisional tails and the model curves,
-                // hollow out the tail dots
-                plan.forEach((d, i) => {
-                    const path = lines[i];
-                    const grp = groups[i];
-                    if (d.kind === 'hi' || d.kind === 'lo' || d.kind === 'pad') {
-                        path.setAttribute('display', 'none');
-                        if (grp) grp.remove();
-                    } else if (d.kind === 'wsb') {
-                        path.setAttribute('stroke-dasharray', '10,6');
-                        path.setAttribute('stroke-width', '2');
-                        if (grp) grp.remove();
-                    } else if (d.kind === 'tail') {
-                        path.setAttribute('stroke-dasharray', '7,7');
-                        if (grp) {
-                            Array.from(grp.querySelectorAll('circle')).forEach(c => {
-                                c.style.fill = '#ffffff';
-                            });
-                        }
-                    }
-                });
-
-                // Present-rate labels next to each curve's endpoint, inside
-                // the padded zone, pushed apart when papers end close together
+                // Anchor data for the labels and the hover tooltip, read
+                // from the dot positions before the dot groups are removed
+                // (with dotSize 0 the circles are invisible but still carry
+                // the rendered coordinates of every point)
+                const hoverPts = [];
                 const annos = [];
                 plan.forEach((d, i) => {
-                    if (d.kind !== 'main') return;
+                    if (d.kind !== 'main' && d.kind !== 'tail') return;
+                    const grp = groups[i];
+                    const circles = grp ? grp.querySelectorAll('circle') : [];
+                    for (let k = 0; k < circles.length; k++) {
+                        const p = d.kind === 'main' ? d.paper.main[k] : d.paper.tail[k];
+                        if (!p) continue;
+                        hoverPts.push({
+                            x: parseFloat(circles[k].getAttribute('cx')),
+                            y: parseFloat(circles[k].getAttribute('cy')),
+                            p: p,
+                            paper: d.paper
+                        });
+                    }
+                    if (d.kind !== 'main' || circles.length === 0) return;
                     const tailIdx = plan.findIndex(e => e.kind === 'tail' && e.paper === d.paper);
-                    const endGrp = (tailIdx >= 0 && groups[tailIdx]) ? groups[tailIdx] : groups[i];
-                    const circles = endGrp ? endGrp.querySelectorAll('circle') : [];
-                    if (!circles.length) return;
-                    const lastDot = circles[circles.length - 1];
+                    const endGrp = (tailIdx >= 0 && groups[tailIdx]) ? groups[tailIdx] : grp;
+                    const endCircles = endGrp.querySelectorAll('circle');
+                    const lastDot = endCircles[endCircles.length - 1];
+                    if (!lastDot) return;
                     annos.push({
                         x: parseFloat(lastDot.getAttribute('cx')) + 8,
                         y: parseFloat(lastDot.getAttribute('cy')),
@@ -2333,6 +2329,25 @@
                         lines: presentRateLines(d.paper.last, d.paper.fit)
                     });
                 });
+
+                // Per-dataset styling: hide the band edges and the padding
+                // point, dash the provisional tails and the model curves;
+                // the dot groups go entirely (the estimate is a curve)
+                plan.forEach((d, i) => {
+                    const path = lines[i];
+                    if (d.kind === 'hi' || d.kind === 'lo' || d.kind === 'pad') {
+                        path.setAttribute('display', 'none');
+                    } else if (d.kind === 'wsb') {
+                        path.setAttribute('stroke-dasharray', '10,6');
+                        path.setAttribute('stroke-width', '2');
+                    } else if (d.kind === 'tail') {
+                        path.setAttribute('stroke-dasharray', '7,7');
+                    }
+                    if (groups[i]) groups[i].remove();
+                });
+
+                // Present-rate labels next to each curve's endpoint, inside
+                // the padded zone, pushed apart when papers end close together
                 const rowH = 14;
                 annos.sort((a, b) => a.y - b.y);
                 annos.forEach(a => {
@@ -2403,45 +2418,56 @@
                     }
                     return (Math.round(x * 10) / 10) + (Mode === 2 ? ' yr' : ' mo');
                 };
-                const dotR = 1.75, dotHoverR = 3; // 3.5x resp. 6x dotSize 0.5
-                svg.addEventListener('mouseover', (ev) => {
-                    const c = ev.target;
-                    if (!c || c.tagName !== 'circle' || !c.parentElement) return;
-                    const gi = c.parentElement.getAttribute('xy-group-index');
-                    if (gi === null) return;
-                    const d = plan[Number(gi)];
-                    if (!d || (d.kind !== 'main' && d.kind !== 'tail')) return;
-                    const idx = Array.prototype.indexOf.call(c.parentElement.children, c);
-                    const p = d.kind === 'main' ? d.paper.main[idx] : d.paper.tail[idx];
-                    if (!p) return;
-                    c.setAttribute('r', dotHoverR);
-                    tipTitle.textContent = fmtX(p);
-                    tipSwatch.style.fill = d.paper.color;
-                    tipText.textContent = d.paper.label + ': ' + rateTooltipText(p);
+
+                // Nearest-point hover: the tooltip and a small highlight dot
+                // follow the mouse along the central curves
+                const marker = document.createElementNS(NS, 'circle');
+                marker.setAttribute('class', 'rate-hover-marker');
+                marker.setAttribute('r', '3.5');
+                marker.setAttribute('display', 'none');
+                graphG.appendChild(marker);
+                const hideHover = () => {
+                    marker.setAttribute('display', 'none');
+                    tip.style.visibility = 'hidden';
+                };
+                svg.addEventListener('mousemove', (ev) => {
+                    const box = svg.getBoundingClientRect();
+                    if (!box.width) return;
+                    const scale = (parseFloat(svg.getAttribute('width')) || box.width) / box.width;
+                    const mx = (ev.clientX - box.left) * scale - M.left;
+                    const my = (ev.clientY - box.top) * scale - M.top;
+                    let best = null;
+                    let bestD2 = 20 * 20; // activation radius in svg px
+                    for (const q of hoverPts) {
+                        const d2 = (q.x - mx) * (q.x - mx) + (q.y - my) * (q.y - my);
+                        if (d2 < bestD2) { bestD2 = d2; best = q; }
+                    }
+                    if (!best) {
+                        hideHover();
+                        return;
+                    }
+                    marker.setAttribute('cx', best.x);
+                    marker.setAttribute('cy', best.y);
+                    marker.setAttribute('fill', best.paper.color);
+                    marker.setAttribute('display', 'block');
+                    tipTitle.textContent = fmtX(best.p);
+                    tipSwatch.style.fill = best.paper.color;
+                    tipText.textContent = best.paper.label + ': ' + rateTooltipText(best.p);
                     let w = 180;
                     try {
                         w = Math.max(tipTitle.getBBox().width, tipText.getBBox().width + 12) + 20;
                     } catch (e) { /* getBBox needs layout; keep the fallback */ }
                     tipBg.setAttribute('width', w.toFixed(0));
                     tipBg.setAttribute('height', '50');
-                    const cx = parseFloat(c.getAttribute('cx'));
-                    const cy = parseFloat(c.getAttribute('cy'));
-                    let tx = cx + M.left + 5;
-                    let ty = cy + M.top + 5;
-                    if (cx > innerW / 2) tx -= w + 20;
-                    if (cy > innerH / 2) ty -= 70;
+                    let tx = best.x + M.left + 5;
+                    let ty = best.y + M.top + 5;
+                    if (best.x > innerW / 2) tx -= w + 20;
+                    if (best.y > innerH / 2) ty -= 70;
                     tip.setAttribute('x', tx.toFixed(0));
                     tip.setAttribute('y', ty.toFixed(0));
                     tip.style.visibility = 'visible';
                 });
-                svg.addEventListener('mouseout', (ev) => {
-                    const c = ev.target;
-                    if (c && c.tagName === 'circle' && c.parentElement &&
-                        c.parentElement.getAttribute('xy-group-index') !== null) {
-                        c.setAttribute('r', dotR);
-                    }
-                    tip.style.visibility = 'hidden';
-                });
+                svg.addEventListener('mouseleave', hideHover);
             } catch (e) {
                 console.error('Rate chart decoration failed:', e);
             }

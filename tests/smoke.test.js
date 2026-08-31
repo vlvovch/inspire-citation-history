@@ -111,7 +111,7 @@ document.addEventListener('DOMContentLoaded', () => {
         var cfg = lastCfg();
         smokeLog('rate config carries the xkcd styling of the cumulative view',
             cfg.title === 'Citation Rate' && cfg.yLabel === 'Citations per year' &&
-            cfg.options.dotSize === 0.5 && cfg.options.showLine === true &&
+            cfg.options.dotSize === 0 && cfg.options.showLine === true &&
             cfg.options.timeFormat === 'MMM D, YYYY',
             JSON.stringify({ t: cfg.title, y: cfg.yLabel }));
         var ds = cfg.data.datasets;
@@ -119,6 +119,7 @@ document.addEventListener('DOMContentLoaded', () => {
             ds.length === 9 && ds[0].label.indexOf('Paper A') === 0 && ds[1].label.indexOf('Paper B') === 0 &&
             ds[ds.length - 1].label === '' && ds[ds.length - 1].data.length === 1,
             ds.map(function (d) { return d.label; }).join(' | '));
+        smokeLog('pad point pins the y-axis to start at zero', ds[ds.length - 1].data[0].y === 0);
         smokeLog('per-dataset colors aligned', cfg.options.dataColors.length === ds.length);
         smokeLog('smooth central curve is dense', ds[0].data.length >= 80, 'pts=' + ds[0].data.length);
         var svgR = chartSvg();
@@ -152,23 +153,31 @@ document.addEventListener('DOMContentLoaded', () => {
                 return ['upper 68%', 'lower 68%', 'now (provisional)', 'model fit'].indexOf(t.textContent) < 0;
             }));
 
-        // Tooltip: hover a dot on the first paper's curve
+        smokeLog('no dots drawn on the rate curves',
+            svgR.querySelectorAll('g[xy-group-index]').length === 0,
+            'groups=' + svgR.querySelectorAll('g[xy-group-index]').length);
+
+        // Tooltip: move the mouse onto the middle of the first paper's curve
         var tipEl = svgR.querySelector('svg.rate-tooltip');
         smokeLog('rate tooltip exists and starts hidden',
             !!tipEl && tipEl.style.visibility === 'hidden');
-        var dot = svgR.querySelector('g[xy-group-index="0"] circle');
-        if (dot) {
-            dot.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
-            var tipTexts = tipEl ? Array.from(tipEl.querySelectorAll('text')).map(function (t) { return t.textContent; }) : [];
-            smokeLog('hovering a dot shows the terse \\u00b1 tooltip',
-                !!tipEl && tipEl.style.visibility === 'visible' &&
-                tipTexts.some(function (t) { return t.indexOf('Paper A') === 0 && (t.indexOf('\\u00b1') > 0 || t.indexOf('+') > 0); }),
-                tipTexts.join(' | '));
-            dot.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }));
-            smokeLog('tooltip hides on mouseout', tipEl.style.visibility === 'hidden');
-        } else {
-            smokeLog('hover dot found for tooltip test', false);
-        }
+        var mainPath = svgR.querySelectorAll('path.xkcd-chart-xyline')[0];
+        var midPt = mainPath.getPointAtLength(mainPath.getTotalLength() / 2);
+        var svgBox = svgR.getBoundingClientRect();
+        var sc = svgBox.width / parseFloat(svgR.getAttribute('width'));
+        svgR.dispatchEvent(new MouseEvent('mousemove', { bubbles: true,
+            clientX: svgBox.left + (midPt.x + 70) * sc, clientY: svgBox.top + (midPt.y + 60) * sc }));
+        var marker = svgR.querySelector('circle.rate-hover-marker');
+        var tipTexts = tipEl ? Array.from(tipEl.querySelectorAll('text')).map(function (t) { return t.textContent; }) : [];
+        smokeLog('mouse near the curve shows the terse \\u00b1 tooltip and a marker',
+            !!tipEl && tipEl.style.visibility === 'visible' &&
+            !!marker && marker.getAttribute('display') === 'block' &&
+            tipTexts.some(function (t) { return t.indexOf('Paper A') === 0 && (t.indexOf('\\u00b1') > 0 || t.indexOf('+') > 0); }),
+            tipTexts.join(' | '));
+        svgR.dispatchEvent(new MouseEvent('mousemove', { bubbles: true,
+            clientX: svgBox.left + 1, clientY: svgBox.top + 1 }));
+        smokeLog('tooltip hides away from the curves',
+            tipEl.style.visibility === 'hidden' && marker.getAttribute('display') === 'none');
 
         smokeLog('estimator + width selectors shown in rate view',
             document.getElementById('estimator-group').style.display === 'flex' &&
