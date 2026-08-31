@@ -168,14 +168,24 @@ document.addEventListener('DOMContentLoaded', () => {
         updateUrl();
         smokeLog('url carries est=blocks', location.search.indexOf('est=blocks') >= 0, location.search);
 
+        var cfgCountBefore = window.__chartConfigs.length;
         document.getElementById('blocks-p0').value = '0.9';
-        updateChart();
-        updateUrl();
+        document.getElementById('blocks-p0').dispatchEvent(new Event('change'));
+        smokeLog('sensitivity change event triggers a redraw',
+            window.__chartConfigs.length === cfgCountBefore + 1, 'configs ' + cfgCountBefore + ' -> ' + window.__chartConfigs.length);
         smokeLog('url carries p0=0.9 when eager', location.search.indexOf('p0=0.9') >= 0, location.search);
         document.getElementById('blocks-p0').value = '0.05';
-        updateChart();
-        updateUrl();
+        document.getElementById('blocks-p0').dispatchEvent(new Event('change'));
         smokeLog('p0 param dropped at strict default', location.search.indexOf('p0=') < 0, location.search);
+
+        // Every rate control must redraw through its real change event
+        var controlIds = ['rate-estimator', 'bin-width', 'blocks-p0'];
+        var allWired = controlIds.every(function (id) {
+            var before = window.__chartConfigs.length;
+            document.getElementById(id).dispatchEvent(new Event('change'));
+            return window.__chartConfigs.length === before + 1;
+        });
+        smokeLog('all rate controls have live change listeners', allWired);
 
         document.getElementById('rate-estimator').value = 'smooth';
         updateChart();
