@@ -242,7 +242,7 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('wsb-fit').checked = true;
         document.getElementById('wsb-fit').dispatchEvent(new Event('change'));
         var cfgCum = window.__xkcdConfigs[window.__xkcdConfigs.length - 1];
-        var fitLabels = cfgCum.data.datasets.filter(function (d) { return d.label.indexOf('fit') === 0; });
+        var fitLabels = cfgCum.data.datasets.filter(function (d) { return d.label.indexOf('fit') === 0 || d.label.indexOf('projected total') === 0; });
         smokeLog('cumulative view gains one model curve (mature paper only)',
             cfgCum.data.datasets.length === 3 && fitLabels.length === 1,
             'datasets=' + cfgCum.data.datasets.length);
@@ -252,6 +252,31 @@ document.addEventListener('DOMContentLoaded', () => {
         smokeLog('wsb checkbox visible in cumulative view', document.getElementById('wsb-group').style.display === 'flex');
         updateUrl();
         smokeLog('wsb param kept in cumulative view', location.search.indexOf('wsb=true') >= 0, location.search);
+        // Legend pruning on a synthetic chart.xkcd-style legend
+        var NS = 'http://www.w3.org/2000/svg';
+        var fakeSvg = document.createElementNS(NS, 'svg');
+        var legendG = document.createElementNS(NS, 'g');
+        var legendBg = document.createElementNS(NS, 'rect');
+        legendBg.setAttribute('width', '200'); legendBg.setAttribute('height', '64'); legendBg.setAttribute('y', '0');
+        legendG.appendChild(legendBg);
+        function legendRow(y, label) {
+            var r = document.createElementNS(NS, 'rect');
+            r.setAttribute('width', '8'); r.setAttribute('height', '8'); r.setAttribute('y', String(y));
+            legendG.appendChild(r);
+            var t = document.createElementNS(NS, 'text');
+            t.setAttribute('y', String(y + 10)); t.textContent = label;
+            legendG.appendChild(t);
+        }
+        legendRow(10, 'Paper A'); legendRow(30, 'projected total (1.6 \u00b1 0.3)k');
+        fakeSvg.appendChild(legendG);
+        pruneFitLegendRows(fakeSvg, ['projected total (1.6 \u00b1 0.3)k']);
+        smokeLog('legend pruning removes fit rows and shrinks the box',
+            fakeSvg.querySelectorAll('text').length === 1 &&
+            fakeSvg.querySelectorAll('rect').length === 2 &&
+            parseFloat(legendBg.getAttribute('height')) === 44,
+            'texts=' + fakeSvg.querySelectorAll('text').length + ' rects=' + fakeSvg.querySelectorAll('rect').length +
+            ' bg=' + legendBg.getAttribute('height'));
+
         document.getElementById('wsb-fit').checked = false;
         document.getElementById('wsb-fit').dispatchEvent(new Event('change'));
         updateUrl();

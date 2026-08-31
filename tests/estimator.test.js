@@ -62,8 +62,8 @@ const section = scriptBody.slice(sectionStart, sectionEnd)
     + '\n' + scriptBody.slice(cacheStart, cacheEnd) + '\n' + scriptBody.slice(spreadStart, spreadEnd);
 const sandbox = {};
 vm.createContext(sandbox);
-vm.runInContext(section + '\nthis.poissonInterval68 = poissonInterval68; this.chooseBinWidthMonths = chooseBinWidthMonths; this.computeRateSeries = computeRateSeries; this.hexToRgba = hexToRgba; this.erf = erf; this.normCdf = normCdf; this.computeSmoothRateSeries = computeSmoothRateSeries; this.presentRateLabelPlugin = presentRateLabelPlugin; this.parseRecordIdentifier = parseRecordIdentifier; this.computeBackoffDelayMs = computeBackoffDelayMs; this.cacheLoad = cacheLoad; this.cacheSave = cacheSave; this.cacheEvictOldest = cacheEvictOldest; this.cacheKeys = cacheKeys; this.safeLocalStorage = safeLocalStorage; this.CACHE_PREFIX = CACHE_PREFIX; this.CACHE_TTL_MS = CACHE_TTL_MS; this.CACHE_MAX_ENTRIES = CACHE_MAX_ENTRIES; this.bayesianBlocksEdges = bayesianBlocksEdges; this.computeBlocksRateSeries = computeBlocksRateSeries; this.BLOCKS_P0 = BLOCKS_P0; this.spreadImpreciseDates = spreadImpreciseDates; this.cacheRemoveOldVersions = cacheRemoveOldVersions; this.normInv = normInv; this.wsbProfile = wsbProfile; this.wsbFitCore = wsbFitCore; this.wsbFit = wsbFit; this.wsbSimulate = wsbSimulate; this.wsbBootstrap = wsbBootstrap; this.wsbRateCurve = wsbRateCurve; this.formatCitationCount = formatCitationCount; this.WSB_M = WSB_M; this.WSB_MIN_MONTHS = WSB_MIN_MONTHS; this.WSB_MIN_CITATIONS = WSB_MIN_CITATIONS; this.wsbCumulativeCurve = wsbCumulativeCurve;', sandbox);
-const { poissonInterval68, chooseBinWidthMonths, computeRateSeries, hexToRgba, erf, normCdf, computeSmoothRateSeries, presentRateLabelPlugin, parseRecordIdentifier, computeBackoffDelayMs, cacheLoad, cacheSave, cacheEvictOldest, cacheKeys, safeLocalStorage, CACHE_PREFIX, CACHE_TTL_MS, CACHE_MAX_ENTRIES, bayesianBlocksEdges, computeBlocksRateSeries, BLOCKS_P0, spreadImpreciseDates, cacheRemoveOldVersions, normInv, wsbProfile, wsbFitCore, wsbFit, wsbSimulate, wsbBootstrap, wsbRateCurve, formatCitationCount, WSB_M, WSB_MIN_MONTHS, WSB_MIN_CITATIONS, wsbCumulativeCurve } = sandbox;
+vm.runInContext(section + '\nthis.poissonInterval68 = poissonInterval68; this.chooseBinWidthMonths = chooseBinWidthMonths; this.computeRateSeries = computeRateSeries; this.hexToRgba = hexToRgba; this.erf = erf; this.normCdf = normCdf; this.computeSmoothRateSeries = computeSmoothRateSeries; this.presentRateLabelPlugin = presentRateLabelPlugin; this.parseRecordIdentifier = parseRecordIdentifier; this.computeBackoffDelayMs = computeBackoffDelayMs; this.cacheLoad = cacheLoad; this.cacheSave = cacheSave; this.cacheEvictOldest = cacheEvictOldest; this.cacheKeys = cacheKeys; this.safeLocalStorage = safeLocalStorage; this.CACHE_PREFIX = CACHE_PREFIX; this.CACHE_TTL_MS = CACHE_TTL_MS; this.CACHE_MAX_ENTRIES = CACHE_MAX_ENTRIES; this.bayesianBlocksEdges = bayesianBlocksEdges; this.computeBlocksRateSeries = computeBlocksRateSeries; this.BLOCKS_P0 = BLOCKS_P0; this.spreadImpreciseDates = spreadImpreciseDates; this.cacheRemoveOldVersions = cacheRemoveOldVersions; this.normInv = normInv; this.wsbProfile = wsbProfile; this.wsbFitCore = wsbFitCore; this.wsbFit = wsbFit; this.wsbSimulate = wsbSimulate; this.wsbBootstrap = wsbBootstrap; this.wsbRateCurve = wsbRateCurve; this.formatCitationCount = formatCitationCount; this.WSB_M = WSB_M; this.WSB_MIN_MONTHS = WSB_MIN_MONTHS; this.WSB_MIN_CITATIONS = WSB_MIN_CITATIONS; this.wsbCumulativeCurve = wsbCumulativeCurve; this.formatCountWithError = formatCountWithError;', sandbox);
+const { poissonInterval68, chooseBinWidthMonths, computeRateSeries, hexToRgba, erf, normCdf, computeSmoothRateSeries, presentRateLabelPlugin, parseRecordIdentifier, computeBackoffDelayMs, cacheLoad, cacheSave, cacheEvictOldest, cacheKeys, safeLocalStorage, CACHE_PREFIX, CACHE_TTL_MS, CACHE_MAX_ENTRIES, bayesianBlocksEdges, computeBlocksRateSeries, BLOCKS_P0, spreadImpreciseDates, cacheRemoveOldVersions, normInv, wsbProfile, wsbFitCore, wsbFit, wsbSimulate, wsbBootstrap, wsbRateCurve, formatCitationCount, WSB_M, WSB_MIN_MONTHS, WSB_MIN_CITATIONS, wsbCumulativeCurve, formatCountWithError } = sandbox;
 
 // Deterministic PRNG (mulberry32) so stochastic checks are reproducible
 let __seed = 0xC0FFEE;
@@ -643,6 +643,12 @@ check('normInv/normCdf roundtrip', [0.05, 0.2, 0.5, 0.8, 0.95].every(pv => Math.
 check('formatCitationCount', formatCitationCount(842) === '842' && formatCitationCount(3400) === '3.4k' &&
     formatCitationCount(3000) === '3k' && formatCitationCount(250000) === '250k' &&
     formatCitationCount(2.5e6) === '2.5M' && formatCitationCount(5e9) === '>100M');
+check('formatCountWithError: matching units and precision',
+    formatCountWithError(842, 95) === '842 \u00b1 95' &&
+    formatCountWithError(1620, 278) === '(1.6 \u00b1 0.3)k' &&
+    formatCountWithError(125000, 30000) === '(125 \u00b1 30)k' &&
+    formatCountWithError(2.5e6, 4e5) === '(2.5 \u00b1 0.4)M',
+    [formatCountWithError(842, 95), formatCountWithError(1620, 278), formatCountWithError(125000, 30000), formatCountWithError(2.5e6, 4e5)].join(' | '));
 check('wsb guard: too few citations', wsbFit(new Array(30).fill(10), 120).ok === false);
 check('wsb guard: too young', wsbFit(new Array(200).fill(10), 36).ok === false);
 {
@@ -667,6 +673,7 @@ check('wsb guard: too young', wsbFit(new Array(200).fill(10), 36).ok === false);
         // Cumulative model curve: monotone and consistent with c(T)
         const cum = wsbCumulativeCurve(fit, T, 100);
         const cModelT = WSB_M * Math.expm1(fit.lambda * normCdf((Math.log(T) - fit.mu) / fit.sigma));
+        check('wsb cumulative curve values are integers', cum.every(pt => Number.isInteger(pt.y)));
         check('wsb cumulative curve monotone, ends at c(T)',
             cum.every((pt, i, a) => i === 0 || pt.y >= a[i - 1].y - 1e-9) &&
             Math.abs(cum[cum.length - 1].y - cModelT) / cModelT < 0.01);
@@ -711,9 +718,10 @@ check('wsb guard: too young', wsbFit(new Array(200).fill(10), 36).ok === false);
     };
     presentRateLabelPlugin.afterDatasetsDraw(mock);
     check('plugin: projection line only for reliable fits', texts.length === 3 &&
-        texts.filter(a => a.t.indexOf('\u221e') === 0).length === 1, JSON.stringify(texts.map(a => a.t)));
-    const inf = texts.find(a => a.t.indexOf('\u221e') === 0);
-    check('plugin: projection format', !!inf && inf.t.indexOf('3.4k') > 0 && inf.t.indexOf('\u00b1') > 0, inf && inf.t);
+        texts.filter(a => a.t.indexOf('total ') === 0).length === 1, JSON.stringify(texts.map(a => a.t)));
+    const inf = texts.find(a => a.t.indexOf('total ') === 0);
+    check('plugin: projection format in words with matched precision',
+        !!inf && inf.t === 'total (3.4 \u00b1 0.7)k', inf && inf.t);
 }
 
 console.log(failures === 0 ? '\nALL TESTS PASSED' : `\n${failures} TEST(S) FAILED`);
