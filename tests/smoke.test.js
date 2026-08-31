@@ -156,6 +156,12 @@ document.addEventListener('DOMContentLoaded', () => {
         smokeLog('no dots drawn on the rate curves',
             svgR.querySelectorAll('g[xy-group-index]').length === 0,
             'groups=' + svgR.querySelectorAll('g[xy-group-index]').length);
+        var curYear = new Date().getFullYear();
+        var futureTicks = Array.from(svgR.querySelectorAll('g.tick text')).filter(function (t) {
+            return /^\\d{4}$/.test(t.textContent) && parseInt(t.textContent, 10) > curYear;
+        });
+        smokeLog('no future-year axis ticks in the label zone', futureTicks.length === 0,
+            futureTicks.map(function (t) { return t.textContent; }).join(','));
 
         // Tooltip: move the mouse onto the middle of the first paper's curve
         var tipEl = svgR.querySelector('svg.rate-tooltip');

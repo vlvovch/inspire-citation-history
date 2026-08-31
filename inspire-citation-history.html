@@ -2198,18 +2198,26 @@
             });
 
             // Blank zone to the right of the curves for the present-rate
-            // labels: chart.xkcd's right margin is a fixed 30px, so the room
-            // is made inside the plot by padding the x-domain with a single
-            // invisible point. Its y of zero also pins the y-axis to start
-            // at zero (chart.xkcd otherwise starts at the data minimum).
+            // labels, no wider than the widest label needs: chart.xkcd's
+            // right margin is a fixed 30px, so the room is made inside the
+            // plot by padding the x-domain with a single invisible point
+            // (decorateRateChart drops the axis ticks that would land in
+            // it). Its y of zero also pins the y-axis to start at zero
+            // (chart.xkcd otherwise starts at the data minimum).
             let xMin = Infinity, xMax = -Infinity;
             datasets.forEach(ds => ds.data.forEach(q => {
                 const v = Mode === 0 ? q.x.getTime() : q.x;
                 if (v < xMin) xMin = v;
                 if (v > xMax) xMax = v;
             }));
+            let labelPx = 0;
+            papers.forEach(paper => {
+                presentRateLines(paper.last, paper.fit).forEach(line => {
+                    labelPx = Math.max(labelPx, 10 + line.length * 6.6);
+                });
+            });
             const plotW = Math.max((chartContainer.parentElement.clientWidth || 600) - 100, 220);
-            const padFrac = Math.min(0.4, 110 / plotW);
+            const padFrac = Math.min(0.4, Math.min(150, Math.max(55, labelPx)) / plotW);
             const padX = xMax + Math.max(xMax - xMin, 1) * padFrac / (1 - padFrac);
             datasets.push({ label: '', data: [{ x: Mode === 0 ? new Date(padX) : padX, y: 0 }] });
             dataColors.push('rgba(0,0,0,0)');
@@ -2344,6 +2352,21 @@
                         path.setAttribute('stroke-dasharray', '7,7');
                     }
                     if (groups[i]) groups[i].remove();
+                });
+
+                // The padded x-domain would otherwise keep the axis ticking
+                // into the future: drop the x-axis ticks that fall in the
+                // blank label zone (the axis group is the one translated to
+                // the plot bottom; ticks are g.tick at translate(x,0))
+                const xEnd = hoverPts.reduce((m, q) => Math.max(m, q.x), 0);
+                Array.from(svg.querySelectorAll('g')).forEach(g => {
+                    const tr = (g.getAttribute('transform') || '').replace(/\s+/g, '');
+                    const tm = tr.match(/^translate\(0,([\d.]+)\)$/);
+                    if (!tm || parseFloat(tm[1]) < innerH - 2) return;
+                    Array.from(g.querySelectorAll('g.tick')).forEach(t => {
+                        const tx = (t.getAttribute('transform') || '').match(/translate\(([-\d.]+)/);
+                        if (tx && parseFloat(tx[1]) > xEnd + 6) t.remove();
+                    });
                 });
 
                 // Present-rate labels next to each curve's endpoint, inside
