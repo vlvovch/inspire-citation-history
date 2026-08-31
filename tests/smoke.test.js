@@ -145,6 +145,11 @@ document.addEventListener('DOMContentLoaded', () => {
         smokeLog('present-rate labels beside the curves, value \\u00b1 error',
             nowLabels.length === 2 && nowLabels.every(function (t) { return t.textContent.indexOf('\\u00b1') > 0; }),
             nowLabels.map(function (t) { return t.textContent; }).join(' | '));
+        var innerW = svgW - 100; // chart.xkcd margins: left 70, right 30
+        smokeLog('labels hang in the margin right of the plot (curves reach the edge)',
+            getComputedStyle(svgR).overflow === 'visible' &&
+            nowLabels.every(function (t) { return parseFloat(t.getAttribute('x')) >= innerW - 2; }),
+            nowLabels.map(function (t) { return t.getAttribute('x'); }).join(',') + ' vs innerW ' + innerW);
         smokeLog('rate legend pruned to the two papers', legendRows().length === 2 &&
             legendRows().every(function (t) { return t.textContent.indexOf('Paper') === 0; }),
             legendRows().map(function (t) { return t.textContent; }).join(' | '));
