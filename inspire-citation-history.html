@@ -393,17 +393,18 @@
                     } else {
                         url.searchParams.delete('p0');
                     }
-                    if (document.getElementById('wsb-fit').checked) {
-                        url.searchParams.set('wsb', 'true');
-                    } else {
-                        url.searchParams.delete('wsb');
-                    }
                 } else {
                     url.searchParams.delete('rate');
                     url.searchParams.delete('bin');
                     url.searchParams.delete('smooth');
                     url.searchParams.delete('est');
                     url.searchParams.delete('p0');
+                }
+
+                // Model fit applies to both views
+                if (document.getElementById('wsb-fit').checked) {
+                    url.searchParams.set('wsb', 'true');
+                } else {
                     url.searchParams.delete('wsb');
                 }
             } else {
@@ -1494,6 +1495,10 @@
         const WSB_MIN_MONTHS = 60;  // extrapolation is unreliable for young papers
         const WSB_MIN_CITATIONS = 50;
         const WSB_BOOTSTRAP = 40;
+        // Projection requires this fraction of the fitted aging mass to be
+        // observed: below it, the (lambda, mu) degeneracy lets still-rising
+        // histories masquerade as nearly-elapsed ones with wrong c(inf)
+        const WSB_MIN_PHI = 0.85;
 
         // Inverse standard normal CDF (Acklam's rational approximation)
         function normInv(p) {
@@ -1656,7 +1661,13 @@
             return { ok: true, lo: q(0.16), hi: q(0.84), unstable: divergent > B * 0.3 };
         }
 
-        // Full fit with maturity guards and bootstrap
+        // Full fit with maturity guards and bootstrap. The ultimate-impact
+        // projection is only marked reliable when the fitted aging curve has
+        // passed its peak within the observed window (Wang-Mei-Hicks: before
+        // the turnover, "still rising" and "rises forever" cannot be told
+        // apart and c(inf) diverges), lambda is finite territory, and the
+        // bootstrap interval is informative. The in-sample curve stays usable
+        // either way.
         function wsbFit(offsetsMonths, T) {
             if (offsetsMonths.length < WSB_MIN_CITATIONS) {
                 return { ok: false, reason: 'needs at least ' + WSB_MIN_CITATIONS + ' citations' };
@@ -1666,13 +1677,33 @@
             }
             const fit = wsbFitCore(offsetsMonths, T);
             if (!fit.ok) return fit;
-            const boot = wsbBootstrap(fit, T, WSB_BOOTSTRAP);
-            if (boot.ok) {
-                fit.lo = boot.lo;
-                fit.hi = boot.hi;
-                fit.unstable = boot.unstable;
+            fit.phiT = normCdf((Math.log(T) - fit.mu) / fit.sigma);
+            let reliable = fit.phiT >= WSB_MIN_PHI && fit.lambda <= 10;
+            if (reliable) {
+                const boot = wsbBootstrap(fit, T, WSB_BOOTSTRAP);
+                if (boot.ok && boot.hi <= 4 * Math.max(boot.lo, 1)) {
+                    fit.lo = boot.lo;
+                    fit.hi = boot.hi;
+                    fit.unstable = boot.unstable;
+                } else {
+                    reliable = false;
+                }
             }
+            fit.reliable = reliable;
             return fit;
+        }
+
+        // Model cumulative curve: c(t) = m (e^(lambda Phi((ln t - mu)/sigma)) - 1)
+        function wsbCumulativeCurve(fit, T, nPoints) {
+            const points = [];
+            const n = nPoints || 60;
+            for (let g = 1; g <= n; g++) {
+                const t = T * g / n;
+                if (t < 0.1) continue;
+                const c = WSB_M * Math.expm1(fit.lambda * normCdf((Math.log(t) - fit.mu) / fit.sigma));
+                points.push({ t: t, y: c });
+            }
+            return points;
         }
 
         // Model rate curve in citations/year: rate(t) = lambda P(t) m e^(lambda Phi)
@@ -1694,7 +1725,9 @@
             if (!(v >= 0)) return '?';
             if (v < 1000) return String(Math.round(v));
             if (v < 100000) return (v / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
-            return Math.round(v / 1000) + 'k';
+            if (v < 1e6) return Math.round(v / 1000) + 'k';
+            if (v < 1e8) return (v / 1e6).toFixed(1).replace(/\.0$/, '') + 'M';
+            return '>100M';
         }
 
         function hexToRgba(hex, alpha) {
@@ -1722,7 +1755,7 @@
                 showRate && estimatorChoice !== 'blocks' ? 'flex' : 'none';
             document.getElementById('p0-group').style.display =
                 showRate && estimatorChoice === 'blocks' ? 'flex' : 'none';
-            document.getElementById('wsb-group').style.display = showRate ? 'flex' : 'none';
+            document.getElementById('wsb-group').style.display = 'flex'; // both views
             document.getElementById('bin-width-label').textContent =
                 estimatorChoice === 'smooth' ? 'Smoothing:' : 'Bin width:';
 
@@ -1794,6 +1827,39 @@
                 labels: []
             };
 
+            // Optional WSB model overlay on the cumulative view: the fitted
+            // c(t) as a lighter line in the paper's color, with the projected
+            // ultimate count in its legend label when the fit is reliable
+            const cumulativeColors = chartData.datasets.map((d, i) => COLORS[i % COLORS.length]);
+            if (document.getElementById('wsb-fit').checked) {
+                let colorIndex = 0;
+                Object.entries(recidData).forEach(([recid, data]) => {
+                    const record = data.citation_record;
+                    if (!record || !record.refname) return;
+                    const color = COLORS[colorIndex % COLORS.length];
+                    colorIndex++;
+                    if (!record.date) return;
+                    const base = getCitationOffsets(record);
+                    if (!base) return;
+                    const key = recid + ':' + base.offsets.length + ':' + Math.round(base.spanMonths);
+                    let fit = wsbCache.get(key);
+                    if (!fit) {
+                        fit = wsbFit(base.offsets, base.spanMonths);
+                        wsbCache.set(key, fit);
+                    }
+                    if (!fit.ok) return;
+                    const curve = wsbCumulativeCurve(fit, base.spanMonths);
+                    const label = fit.reliable ?
+                        `fit, ∞ ${formatCitationCount(fit.cinf)} ± ${formatCitationCount((fit.hi - fit.lo) / 2)}` :
+                        'fit (no projection)';
+                    chartData.datasets.push({
+                        label: label,
+                        data: curve.map(p => ({ x: rateXValue(base.pubDate, p.t, Mode), y: p.y }))
+                    });
+                    cumulativeColors.push(hexToRgba(color, 0.45));
+                });
+            }
+
             try {
                 const config = {
                     title: 'Citation History',
@@ -1806,7 +1872,7 @@
                         legendPosition: chartXkcd.config.positionType.upLeft,
                         showLine: true,
                         dotSize: 0.5,
-                        dataColors: COLORS,
+                        dataColors: cumulativeColors,
                         margin: { left: 120, right: 60, top: 60, bottom: 50 },
                         strokeWidth: 2.5,
                         // fontFamily: 'Comic Sans MS',
@@ -1849,13 +1915,12 @@
                     const err = (p.hi - p.lo) / 2;
                     const dec = p.y < 10 ? 1 : 0;
                     const lines = [`${p.y.toFixed(dec)} ± ${err.toFixed(dec)}`];
-                    // Projected ultimate citation count from the WSB fit
-                    if (ds.wsbSummary && ds.wsbSummary.ok) {
+                    // Projected ultimate citation count from the WSB fit;
+                    // withheld entirely when the extrapolation is unreliable
+                    if (ds.wsbSummary && ds.wsbSummary.ok && ds.wsbSummary.reliable) {
                         const s = ds.wsbSummary;
-                        let t = '∞ ' + formatCitationCount(s.cinf);
-                        if (s.lo !== undefined) {
-                            t += ' ± ' + formatCitationCount((s.hi - s.lo) / 2);
-                        }
+                        let t = '∞ ' + formatCitationCount(s.cinf) +
+                            ' ± ' + formatCitationCount((s.hi - s.lo) / 2);
                         if (s.unstable) t += '?';
                         lines.push(t);
                     }
@@ -2038,7 +2103,7 @@
                     responsive: true,
                     devicePixelRatio: 2,
                     animation: false,
-                    layout: { padding: { right: 84 } },
+                    layout: { padding: { right: 110 } },
                     interaction: { mode: 'nearest', intersect: true },
                     plugins: {
                         title: { display: true, text: 'Citation Rate', font: { size: 20 } },

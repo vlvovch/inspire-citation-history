@@ -105,7 +105,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const lbl = cfg.options.plugins.tooltip.callbacks.label({ raw: pts[0], dataset: ds[0] });
             smokeLog('smooth tooltip is terse value +- error', typeof lbl === 'string' && (lbl.indexOf('±') >= 0 || lbl.indexOf('+') >= 0) && !isNaN(parseFloat(lbl)) && lbl.indexOf('citations') < 0 && lbl.indexOf('n_eff') < 0, lbl);
             smokeLog('per-chart annotation plugin registered', Array.isArray(cfg.plugins) && cfg.plugins[0] && cfg.plugins[0].id === 'presentRateLabel');
-            smokeLog('right margin reserved for labels', cfg.options.layout && cfg.options.layout.padding && cfg.options.layout.padding.right === 84);
+            smokeLog('right margin reserved for labels', cfg.options.layout && cfg.options.layout.padding && cfg.options.layout.padding.right === 110);
         }
         smokeLog('rate: canvas shown, svg hidden',
             document.getElementById('rate-chart').style.display === 'block' &&
@@ -213,9 +213,9 @@ document.addEventListener('DOMContentLoaded', () => {
             centrals.length === 2 && centrals[0].wsbSummary && centrals[0].wsbSummary.ok === true &&
             centrals[1].wsbSummary && centrals[1].wsbSummary.ok === false,
             JSON.stringify(centrals.map(function (d) { return d.wsbSummary && d.wsbSummary.ok; })));
-        smokeLog('wsb projection is finite and beyond observed count', centrals[0].wsbSummary.ok &&
-            isFinite(centrals[0].wsbSummary.cinf) && centrals[0].wsbSummary.cinf > 300,
-            'cinf=' + (centrals[0].wsbSummary.cinf || 0).toFixed(0));
+        smokeLog('wsb fit carries an explicit reliability verdict',
+            typeof centrals[0].wsbSummary.reliable === 'boolean' && isFinite(centrals[0].wsbSummary.cinf),
+            'reliable=' + centrals[0].wsbSummary.reliable + ' cinf=' + (centrals[0].wsbSummary.cinf || 0).toFixed(0));
         smokeLog('all datasets carry groupKey', cfgW.data.datasets.every(function (d) { return d.groupKey !== undefined; }));
         updateUrl();
         smokeLog('url carries wsb=true', location.search.indexOf('wsb=true') >= 0, location.search);
@@ -229,6 +229,24 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('show-rate').checked = false;
         updateChart();
         smokeLog('switch back to cumulative renders again', (window.__xkcdConfigs || []).length === 2);
+
+        // WSB overlay on the cumulative view
+        document.getElementById('wsb-fit').checked = true;
+        document.getElementById('wsb-fit').dispatchEvent(new Event('change'));
+        var cfgCum = window.__xkcdConfigs[window.__xkcdConfigs.length - 1];
+        var fitLabels = cfgCum.data.datasets.filter(function (d) { return d.label.indexOf('fit') === 0; });
+        smokeLog('cumulative view gains one model curve (mature paper only)',
+            cfgCum.data.datasets.length === 3 && fitLabels.length === 1,
+            'datasets=' + cfgCum.data.datasets.length);
+        smokeLog('cumulative model colors extended to match',
+            cfgCum.options.dataColors.length === 3 &&
+            String(cfgCum.options.dataColors[2]).indexOf('rgba') === 0);
+        smokeLog('wsb checkbox visible in cumulative view', document.getElementById('wsb-group').style.display === 'flex');
+        updateUrl();
+        smokeLog('wsb param kept in cumulative view', location.search.indexOf('wsb=true') >= 0, location.search);
+        document.getElementById('wsb-fit').checked = false;
+        document.getElementById('wsb-fit').dispatchEvent(new Event('change'));
+        updateUrl();
 
         // Identifier parser wired into the page
         const pArx = parseRecordIdentifier('arXiv:2208.06843');

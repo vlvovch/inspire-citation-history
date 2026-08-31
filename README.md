@@ -24,7 +24,7 @@ While the AI coding assistant (Windsurf + Claude Sonnet 3.7) has been immensely 
 - Add records by INSPIRE record ID, arXiv identifier, or DOI (also as URLs)
 - Compare citation trajectories across different papers
 - Citation rate view: time-dependent citation rate (citations/year) with 68% uncertainty bands, treating citations as an inhomogeneous Poisson process. Three estimators: smooth (boundary-corrected Gaussian kernel, default), binned histogram, and Bayesian blocks (optimal change-point segmentation, [Scargle et al. 2013](https://arxiv.org/abs/1207.5578))
-- Optional model fit ([Wang, Song & Barabási 2013](https://www.science.org/doi/10.1126/science.1237825)): overlays the fitted citation model on the rate view and projects each paper's ultimate citation count with bootstrap uncertainties. Requires at least 5 years of history and 50 citations, since the extrapolation is unreliable for young papers, and fits poorly for papers with multi-burst citation histories
+- Optional model fit ([Wang, Song & Barabási 2013](https://www.science.org/doi/10.1126/science.1237825)): overlays the fitted citation model on the rate view and projects each paper's ultimate citation count with bootstrap uncertainties. Requires at least 5 years of history and 50 citations, and the projection is shown only when the fitted aging curve has passed its peak within the observed window and the bootstrap is well-behaved — before the turnover, "still rising" and "rises forever" cannot be distinguished (Wang, Mei & Hicks 2014); the fitted curve itself is drawn regardless. Fits poorly for papers with multi-burst citation histories
 - Option to align timelines to normalize publication dates
 - Read multiple INSPIRE-HEP record IDs through URL
 - Export the graph to a file
