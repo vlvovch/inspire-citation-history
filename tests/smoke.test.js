@@ -203,6 +203,12 @@ document.addEventListener('DOMContentLoaded', () => {
         var stale = cacheLoad(fakeStore, 5, 1000 + CACHE_TTL_MS + 1);
         smokeLog('cache stale detection in page context', !!stale && !stale.fresh);
         smokeLog('cached fetch wrapper defined', typeof citations_for_plot_cached === 'function' && typeof revalidateCachedRecord === 'function');
+        smokeLog('imprecise-date spreading wired', (function () {
+            var cs = [{ date: '2011', recid: 1 }, { date: '2011', recid: 2 }, { date: '2020-03-04', recid: 3 }];
+            spreadImpreciseDates(cs);
+            return cs[0].date !== '2011-01-01' && cs[0].date.indexOf('2011-') === 0 &&
+                cs[1].date.indexOf('2011-') === 0 && cs[2].date === '2020-03-04';
+        })());
         updateUrl();
         smokeLog('rate params removed from url', location.search.indexOf('rate=') < 0 && location.search.indexOf('bin=') < 0, location.search);
 

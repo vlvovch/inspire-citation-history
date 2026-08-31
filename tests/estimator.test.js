@@ -38,6 +38,12 @@ if (backoffStart < 0 || backoffEnd < 0 || backoffEnd <= backoffStart) {
     console.error('FAIL: could not locate backoff helper');
     process.exit(1);
 }
+const spreadStart = scriptBody.indexOf('function spreadImpreciseDates');
+const spreadEnd = scriptBody.indexOf('// Get citation data for plotting');
+if (spreadStart < 0 || spreadEnd < 0 || spreadEnd <= spreadStart) {
+    console.error('FAIL: could not locate spreadImpreciseDates');
+    process.exit(1);
+}
 const cacheStart = scriptBody.indexOf('const CACHE_PREFIX');
 const cacheEnd = scriptBody.indexOf('// Cache-aware wrapper');
 if (cacheStart < 0 || cacheEnd < 0 || cacheEnd <= cacheStart) {
@@ -53,11 +59,11 @@ if (idStart < 0 || idEnd < 0 || idEnd <= idStart) {
 const section = scriptBody.slice(sectionStart, sectionEnd)
     .replace(/^\s*\/\/ -+\s*$/gm, '') + '\n' + scriptBody.slice(pluginStart, pluginEnd)
     + '\n' + scriptBody.slice(idStart, idEnd) + '\n' + scriptBody.slice(backoffStart, backoffEnd)
-    + '\n' + scriptBody.slice(cacheStart, cacheEnd);
+    + '\n' + scriptBody.slice(cacheStart, cacheEnd) + '\n' + scriptBody.slice(spreadStart, spreadEnd);
 const sandbox = {};
 vm.createContext(sandbox);
-vm.runInContext(section + '\nthis.poissonInterval68 = poissonInterval68; this.chooseBinWidthMonths = chooseBinWidthMonths; this.computeRateSeries = computeRateSeries; this.hexToRgba = hexToRgba; this.erf = erf; this.normCdf = normCdf; this.computeSmoothRateSeries = computeSmoothRateSeries; this.presentRateLabelPlugin = presentRateLabelPlugin; this.parseRecordIdentifier = parseRecordIdentifier; this.computeBackoffDelayMs = computeBackoffDelayMs; this.cacheLoad = cacheLoad; this.cacheSave = cacheSave; this.cacheEvictOldest = cacheEvictOldest; this.cacheKeys = cacheKeys; this.safeLocalStorage = safeLocalStorage; this.CACHE_PREFIX = CACHE_PREFIX; this.CACHE_TTL_MS = CACHE_TTL_MS; this.CACHE_MAX_ENTRIES = CACHE_MAX_ENTRIES; this.bayesianBlocksEdges = bayesianBlocksEdges; this.computeBlocksRateSeries = computeBlocksRateSeries; this.BLOCKS_P0 = BLOCKS_P0;', sandbox);
-const { poissonInterval68, chooseBinWidthMonths, computeRateSeries, hexToRgba, erf, normCdf, computeSmoothRateSeries, presentRateLabelPlugin, parseRecordIdentifier, computeBackoffDelayMs, cacheLoad, cacheSave, cacheEvictOldest, cacheKeys, safeLocalStorage, CACHE_PREFIX, CACHE_TTL_MS, CACHE_MAX_ENTRIES, bayesianBlocksEdges, computeBlocksRateSeries, BLOCKS_P0 } = sandbox;
+vm.runInContext(section + '\nthis.poissonInterval68 = poissonInterval68; this.chooseBinWidthMonths = chooseBinWidthMonths; this.computeRateSeries = computeRateSeries; this.hexToRgba = hexToRgba; this.erf = erf; this.normCdf = normCdf; this.computeSmoothRateSeries = computeSmoothRateSeries; this.presentRateLabelPlugin = presentRateLabelPlugin; this.parseRecordIdentifier = parseRecordIdentifier; this.computeBackoffDelayMs = computeBackoffDelayMs; this.cacheLoad = cacheLoad; this.cacheSave = cacheSave; this.cacheEvictOldest = cacheEvictOldest; this.cacheKeys = cacheKeys; this.safeLocalStorage = safeLocalStorage; this.CACHE_PREFIX = CACHE_PREFIX; this.CACHE_TTL_MS = CACHE_TTL_MS; this.CACHE_MAX_ENTRIES = CACHE_MAX_ENTRIES; this.bayesianBlocksEdges = bayesianBlocksEdges; this.computeBlocksRateSeries = computeBlocksRateSeries; this.BLOCKS_P0 = BLOCKS_P0; this.spreadImpreciseDates = spreadImpreciseDates; this.cacheRemoveOldVersions = cacheRemoveOldVersions;', sandbox);
+const { poissonInterval68, chooseBinWidthMonths, computeRateSeries, hexToRgba, erf, normCdf, computeSmoothRateSeries, presentRateLabelPlugin, parseRecordIdentifier, computeBackoffDelayMs, cacheLoad, cacheSave, cacheEvictOldest, cacheKeys, safeLocalStorage, CACHE_PREFIX, CACHE_TTL_MS, CACHE_MAX_ENTRIES, bayesianBlocksEdges, computeBlocksRateSeries, BLOCKS_P0, spreadImpreciseDates, cacheRemoveOldVersions } = sandbox;
 
 // Deterministic PRNG (mulberry32) so stochastic checks are reproducible
 let __seed = 0xC0FFEE;
@@ -513,6 +519,42 @@ check('blocks: weekly quantization path preserves counts', (() => {
     return blockStarts(s).reduce((a, p) => a + p.n, 0) === 6000;
 })());
 check('bayesianBlocksEdges: no events -> [0, T]', JSON.stringify(bayesianBlocksEdges([], 10, BLOCKS_P0)) === '[0,10]');
+
+// --- Imprecise-date spreading ---
+{
+    const mk = (date, recid) => ({ date: date, recid: recid });
+    const cits = [];
+    for (let i = 0; i < 12; i++) cits.push(mk('2011', 100 + i));
+    cits.push(mk('2011-05', 50), mk('2011-05', 51), mk('2011-05', 52));
+    cits.push(mk('2010-07-15', 7));
+    spreadImpreciseDates(cits);
+    check('spread: full dates untouched', cits[15].date === '2010-07-15');
+    const yearSpread = cits.slice(0, 12).map(c => c.date);
+    check('spread: year-only stay within their year',
+        yearSpread.every(d => d >= '2011-01-01' && d <= '2011-12-31'), JSON.stringify(yearSpread));
+    check('spread: no Jan 1 pileup', yearSpread.every(d => d !== '2011-01-01'));
+    check('spread: dates increase with recid', yearSpread.every((d, i, a) => i === 0 || d > a[i - 1]));
+    check('spread: coverage across the year', yearSpread[0] < '2011-03-01' && yearSpread[11] > '2011-10-31',
+        yearSpread[0] + ' .. ' + yearSpread[11]);
+    const monthSpread = cits.slice(12, 15).map(c => c.date);
+    check('spread: month-only stay within their month',
+        monthSpread.every(d => d >= '2011-05-01' && d <= '2011-05-31'), JSON.stringify(monthSpread));
+    const shuffled = [mk('2011', 105), mk('2011', 101), mk('2011', 103)];
+    const ordered = [mk('2011', 101), mk('2011', 103), mk('2011', 105)];
+    spreadImpreciseDates(shuffled);
+    spreadImpreciseDates(ordered);
+    const byRecid = arr => JSON.stringify(arr.slice().sort((a, b) => a.recid - b.recid));
+    check('spread: deterministic regardless of arrival order', byRecid(shuffled) === byRecid(ordered));
+}
+check('old cache versions removed, current and foreign keys kept', (() => {
+    const st = makeFakeStorage();
+    st.setItem('inspire-citation-cache-v1:123', 'old');
+    st.setItem(CACHE_PREFIX + '456', 'current');
+    st.setItem('user-setting', 'keep');
+    cacheRemoveOldVersions(st);
+    return st.getItem('inspire-citation-cache-v1:123') === null &&
+        st.getItem(CACHE_PREFIX + '456') === 'current' && st.getItem('user-setting') === 'keep';
+})());
 
 console.log(failures === 0 ? '\nALL TESTS PASSED' : `\n${failures} TEST(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

@@ -67,6 +67,8 @@ The application is built as a single HTML file with embedded JavaScript that:
 
 **Note on Performance**: Citation records are retrieved 500 at a time, requesting only the citation dates (`fields=earliest_date`), which keeps responses small and loading fast even for highly cited papers. All API calls share a rate limiter that stays below INSPIRE's limit of 15 requests per 5-second window, and requests are automatically retried with exponential backoff on rate-limit (429) or server errors, so loading many papers at once should slow down gracefully rather than halt. Fetched citation data is additionally cached in the browser's localStorage for 24 hours: recently viewed papers and shared links render instantly, and stale entries are refreshed in the background.
 
+**Note on citation dates**: Citing records with only year- or month-level date precision (common for conference proceedings and theses) are spread evenly across their year or month instead of being piled on January 1, which would otherwise produce phantom spikes in the citation rate.
+
 ### Testing
 
 The `tests/` directory contains a plain-Node test suite (no dependencies to install): `estimator.test.js` validates the citation-rate estimators against exact Poisson intervals and Monte Carlo synthetic data, along with the record identifier parser and API retry backoff; `smoke.test.js` loads the page in headless Chrome/Chromium (auto-detected, override with `CHROME_BIN`) with stubbed chart libraries to check the UI wiring. Both run in CI on every push via GitHub Actions.

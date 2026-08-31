@@ -523,7 +523,7 @@
         // immediately and is refreshed in the background. All storage
         // access degrades silently when localStorage is unavailable.
 
-        const CACHE_PREFIX = 'inspire-citation-cache-v1:';
+        const CACHE_PREFIX = 'inspire-citation-cache-v2:'; // v2: imprecise dates spread, not piled on Jan 1
         const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
         const CACHE_MAX_ENTRIES = 50;
 
@@ -595,6 +595,20 @@
             }
             const excess = cacheKeys(storage).length - CACHE_MAX_ENTRIES;
             if (excess > 0) cacheEvictOldest(storage, excess);
+        }
+
+        // Remove cache entries left behind by older, incompatible cache versions
+        function cacheRemoveOldVersions(storage) {
+            const stale = [];
+            for (let i = 0; i < storage.length; i++) {
+                const key = storage.key(i);
+                if (key && key.indexOf('inspire-citation-cache-') === 0 && key.indexOf(CACHE_PREFIX) !== 0) {
+                    stale.push(key);
+                }
+            }
+            stale.forEach(key => {
+                try { storage.removeItem(key); } catch (e) { /* ignore */ }
+            });
         }
 
         // Cache-aware wrapper around citations_for_plot
@@ -811,17 +825,45 @@
                     citation_info.date = created_date.substring(0, 10);
                 }
                 
-                // If the date has only year, add month and day
-                if (citation_info.date.length === 4) {
-                    citation_info.date = `${citation_info.date}-01-01`;
-                }
-                
+                // Dates that remain year-only (or month-only) are resolved by
+                // spreadImpreciseDates once all pages have been collected
+
                 citations.push(citation_info);
             }
             
             return citations;
         }
         
+        // Year-only and month-only citation dates (typical of conference
+        // proceedings volumes and theses) would otherwise pile up on Jan 1 or
+        // the 1st of the month and produce phantom rate spikes. Spread each
+        // such group deterministically (ordered by recid, so results are
+        // stable across reloads) across its year or month.
+        function spreadImpreciseDates(citations) {
+            const groups = new Map();
+            for (let i = 0; i < citations.length; i++) {
+                const d = citations[i].date || "";
+                if (/^\d{4}$/.test(d) || /^\d{4}-\d{2}$/.test(d)) {
+                    if (!groups.has(d)) groups.set(d, []);
+                    groups.get(d).push(i);
+                }
+            }
+            groups.forEach((idxs, key) => {
+                const year = parseInt(key.substring(0, 4));
+                const month = key.length === 7 ? parseInt(key.substring(5, 7)) - 1 : null;
+                const startMs = Date.UTC(year, month === null ? 0 : month, 1);
+                const endMs = month === null ?
+                    Date.UTC(year + 1, 0, 1) :
+                    Date.UTC(year, month + 1, 1);
+                idxs.sort((a, b) => (citations[a].recid || 0) - (citations[b].recid || 0));
+                for (let j = 0; j < idxs.length; j++) {
+                    const t = startMs + (endMs - startMs) * (j + 1) / (idxs.length + 1);
+                    citations[idxs[j]].date = new Date(t).toISOString().substring(0, 10);
+                }
+            });
+            return citations;
+        }
+
         // Get citation data for plotting
         async function citations_for_plot(recid, progressCallback) {
             try {
@@ -871,9 +913,12 @@
                     page++;
                 }
                 
+                // Resolve imprecise (year/month-only) dates before use
+                spreadImpreciseDates(allCitations);
+
                 // Get record info for formatting
                 const recid_info = await get_recid_string(recid);
-                
+
                 // Extract dates from all citations
                 const dates_only = allCitations.map(citation => citation.date || "");
                 
@@ -2086,6 +2131,8 @@
         
         // Initialize the app
         document.addEventListener('DOMContentLoaded', function() {
+            const storage = safeLocalStorage();
+            if (storage) cacheRemoveOldVersions(storage);
             // Parse URL parameters when the page loads
             parseUrlParams();
         });
