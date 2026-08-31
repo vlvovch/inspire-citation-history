@@ -856,7 +856,8 @@
         // the 1st of the month and produce phantom rate spikes. Spread each
         // such group deterministically (ordered by recid, so results are
         // stable across reloads) across its year or month.
-        function spreadImpreciseDates(citations) {
+        function spreadImpreciseDates(citations, nowMs) {
+            const cap = nowMs || Date.now();
             const groups = new Map();
             for (let i = 0; i < citations.length; i++) {
                 const d = citations[i].date || "";
@@ -869,9 +870,15 @@
                 const year = parseInt(key.substring(0, 4));
                 const month = key.length === 7 ? parseInt(key.substring(5, 7)) - 1 : null;
                 const startMs = Date.UTC(year, month === null ? 0 : month, 1);
-                const endMs = month === null ?
+                let endMs = month === null ?
                     Date.UTC(year + 1, 0, 1) :
                     Date.UTC(year, month + 1, 1);
+                // The current year/month has not fully elapsed: spread only up
+                // to the present, otherwise the future-placed dates would be
+                // clamped to "now" and pile up there
+                if (endMs > cap && cap > startMs) {
+                    endMs = cap;
+                }
                 idxs.sort((a, b) => (citations[a].recid || 0) - (citations[b].recid || 0));
                 for (let j = 0; j < idxs.length; j++) {
                     const t = startMs + (endMs - startMs) * (j + 1) / (idxs.length + 1);

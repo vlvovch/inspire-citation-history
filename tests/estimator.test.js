@@ -573,6 +573,25 @@ check('blocks: ramped x strictly increasing, trueX on block starts', (() => {
     const byRecid = arr => JSON.stringify(arr.slice().sort((a, b) => a.recid - b.recid));
     check('spread: deterministic regardless of arrival order', byRecid(shuffled) === byRecid(ordered));
 }
+check('spread: current year capped at the present', (() => {
+    const now26 = Date.UTC(2026, 7, 31); // Aug 31, 2026
+    const cs = [];
+    for (let i = 0; i < 12; i++) cs.push({ date: '2026', recid: i });
+    spreadImpreciseDates(cs, now26);
+    return cs.every(c => Date.parse(c.date + 'T00:00:00Z') <= now26 && c.date >= '2026-01-01');
+})());
+check('spread: fully future period left within its own span', (() => {
+    const now26 = Date.UTC(2026, 7, 31);
+    const cs = [{ date: '2027', recid: 1 }, { date: '2027', recid: 2 }];
+    spreadImpreciseDates(cs, now26);
+    return cs.every(c => c.date >= '2027-01-01' && c.date <= '2027-12-31');
+})());
+check('spread: current month capped at the present', (() => {
+    const now26 = Date.UTC(2026, 7, 20); // Aug 20, 2026
+    const cs = [{ date: '2026-08', recid: 1 }, { date: '2026-08', recid: 2 }, { date: '2026-08', recid: 3 }];
+    spreadImpreciseDates(cs, now26);
+    return cs.every(c => c.date >= '2026-08-01' && Date.parse(c.date + 'T00:00:00Z') <= now26);
+})());
 check('old cache versions removed, current and foreign keys kept', (() => {
     const st = makeFakeStorage();
     st.setItem('inspire-citation-cache-v1:123', 'old');
