@@ -2458,7 +2458,7 @@
                 // Present-rate labels right of each curve's endpoint, in the
                 // margin outside the plot, pushed apart when papers end
                 // close together
-                const rowH = 14;
+                const rowH = 17;
                 annos.sort((a, b) => a.y - b.y);
                 annos.forEach(a => {
                     // keep labels inside the plot and clear of the x-axis line
@@ -2477,7 +2477,7 @@
                         t.setAttribute('x', a.x.toFixed(1));
                         t.setAttribute('y', (a.y + li * rowH + 4).toFixed(1));
                         t.setAttribute('fill', a.color);
-                        t.setAttribute('font-size', '12');
+                        t.setAttribute('font-size', '15');
                         t.textContent = textLine;
                         graphG.appendChild(t);
                     });
