@@ -150,6 +150,9 @@
             align-items: center;
             justify-content: flex-end;
             margin-bottom: 10px;
+            /* as tall as the selects, so the row keeps its height (and the
+               chart its position) when the rate-only selectors are hidden */
+            min-height: 37px;
         }
         .align-checkbox input[type="checkbox"] {
             width: auto;
