@@ -110,8 +110,8 @@ document.addEventListener('DOMContentLoaded', () => {
         smokeLog('rate: canvas shown, svg hidden',
             document.getElementById('rate-chart').style.display === 'block' &&
             document.getElementById('chart').style.display === 'none');
-        smokeLog('smooth + width selectors shown in rate view',
-            document.getElementById('smooth-group').style.display === 'flex' &&
+        smokeLog('estimator + width selectors shown in rate view',
+            document.getElementById('estimator-group').style.display === 'flex' &&
             document.getElementById('bin-width-group').style.display === 'flex');
         smokeLog('width label reads Smoothing in smooth mode',
             document.getElementById('bin-width-label').textContent === 'Smoothing:');
@@ -126,8 +126,8 @@ document.addEventListener('DOMContentLoaded', () => {
             cfgA.options.scales.x.title.text === 'Years since publication', cfgA.options.scales.x.title.text);
         document.getElementById('align-timeline').checked = false;
 
-        // Binned mode: uncheck smooth
-        document.getElementById('smooth-rate').checked = false;
+        // Binned mode
+        document.getElementById('rate-estimator').value = 'binned';
         updateChart();
         const cfgS = window.__chartConfigs[window.__chartConfigs.length - 1];
         smokeLog('binned mode: stepped with markers',
@@ -145,18 +145,33 @@ document.addEventListener('DOMContentLoaded', () => {
         smokeLog('old rate charts destroyed on rebuild', (window.__chartDestroys || 0) >= 3, 'destroys=' + window.__chartDestroys);
 
         updateUrl();
-        smokeLog('url carries rate=true & bin=12 & smooth=false',
+        smokeLog('url carries rate=true & bin=12 & est=binned',
             location.search.indexOf('rate=true') >= 0 && location.search.indexOf('bin=12') >= 0 &&
-            location.search.indexOf('smooth=false') >= 0, location.search);
+            location.search.indexOf('est=binned') >= 0, location.search);
 
-        document.getElementById('smooth-rate').checked = true;
+        // Bayesian blocks mode
+        document.getElementById('rate-estimator').value = 'blocks';
+        updateChart();
+        const cfgK = window.__chartConfigs[window.__chartConfigs.length - 1];
+        const dsK = cfgK.data.datasets[0];
+        smokeLog('blocks: 3 datasets per paper', cfgK.data.datasets.length === 6, 'got ' + cfgK.data.datasets.length);
+        smokeLog('blocks: rectangles without steps/markers', dsK.stepped === false && dsK.pointRadius === 0);
+        smokeLog('blocks: paired points with equal rates', dsK.data.length >= 2 && dsK.data.length % 2 === 0 &&
+            dsK.data.every(function (pt, i, a) { return i % 2 === 1 ? pt.y === a[i - 1].y : true; }));
+        smokeLog('blocks: few blocks for featureless data', dsK.data.length / 2 <= 4, 'blocks=' + dsK.data.length / 2);
+        smokeLog('blocks: width selector hidden', document.getElementById('bin-width-group').style.display === 'none');
+        smokeLog('blocks: rateData estimator label', rateData[0].estimator === 'blocks');
+        updateUrl();
+        smokeLog('url carries est=blocks', location.search.indexOf('est=blocks') >= 0, location.search);
+
+        document.getElementById('rate-estimator').value = 'smooth';
         updateChart();
         const cfgT = window.__chartConfigs[window.__chartConfigs.length - 1];
         smokeLog('smooth mode honors width override as FWHM=12',
             cfgT.data.datasets[0].data.length >= 120 && rateData[0].widthMonths === 12,
             'width=' + rateData[0].widthMonths);
         updateUrl();
-        smokeLog('smooth param removed when back to default', location.search.indexOf('smooth=') < 0, location.search);
+        smokeLog('est param removed when back to default', location.search.indexOf('est=') < 0, location.search);
 
         document.getElementById('show-rate').checked = false;
         updateChart();
@@ -189,6 +204,11 @@ document.addEventListener('DOMContentLoaded', () => {
         smokeLog('cached fetch wrapper defined', typeof citations_for_plot_cached === 'function' && typeof revalidateCachedRecord === 'function');
         updateUrl();
         smokeLog('rate params removed from url', location.search.indexOf('rate=') < 0 && location.search.indexOf('bin=') < 0, location.search);
+
+        // Legacy smooth=false URLs map to the binned estimator
+        history.pushState({}, '', '?rate=true&smooth=false');
+        parseUrlParams();
+        smokeLog('legacy smooth=false maps to binned', document.getElementById('rate-estimator').value === 'binned');
     } catch (err) {
         smokeLog('EXCEPTION: ' + err.message + ' @ ' + ((err.stack || '').split('\\n')[1] || ''), false);
     }

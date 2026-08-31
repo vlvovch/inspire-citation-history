@@ -201,9 +201,13 @@
                 <input type="checkbox" id="show-rate" />
                 <label for="show-rate" style="margin-left: 5px;">Citation rate</label>
             </div>
-            <div id="smooth-group" style="display: none; align-items: center; margin-right: 20px;">
-                <input type="checkbox" id="smooth-rate" checked />
-                <label for="smooth-rate" style="margin-left: 5px;">Smooth</label>
+            <div id="estimator-group" style="display: none; align-items: center; margin-right: 20px;">
+                <label for="rate-estimator" style="margin-right: 5px;">Estimator:</label>
+                <select id="rate-estimator">
+                    <option value="smooth">Smooth</option>
+                    <option value="binned">Binned</option>
+                    <option value="blocks">Bayesian blocks</option>
+                </select>
             </div>
             <div id="bin-width-group" style="display: none; align-items: center; margin-right: 20px;">
                 <label for="bin-width" id="bin-width-label" style="margin-right: 5px;">Smoothing:</label>
@@ -361,16 +365,19 @@
                     } else {
                         url.searchParams.delete('bin');
                     }
-                    // Smooth is the default; only record opting out
-                    if (!document.getElementById('smooth-rate').checked) {
-                        url.searchParams.set('smooth', 'false');
+                    // Smooth is the default estimator; record deviations
+                    const estimatorChoice = document.getElementById('rate-estimator').value;
+                    if (estimatorChoice !== 'smooth') {
+                        url.searchParams.set('est', estimatorChoice);
                     } else {
-                        url.searchParams.delete('smooth');
+                        url.searchParams.delete('est');
                     }
+                    url.searchParams.delete('smooth'); // legacy parameter
                 } else {
                     url.searchParams.delete('rate');
                     url.searchParams.delete('bin');
                     url.searchParams.delete('smooth');
+                    url.searchParams.delete('est');
                 }
             } else {
                 // Remove all parameters if no records
@@ -379,6 +386,7 @@
                 url.searchParams.delete('rate');
                 url.searchParams.delete('bin');
                 url.searchParams.delete('smooth');
+                url.searchParams.delete('est');
             }
             
             // Update the URL without reloading the page
@@ -1196,6 +1204,134 @@
             return { points: points, widthMonths: fwhm };
         }
 
+        const BLOCKS_P0 = 0.05; // false-alarm probability per change point
+
+        // Bayesian Blocks (Scargle et al. 2013, ApJ 764, 167): globally optimal
+        // piecewise-constant segmentation of event times via dynamic programming,
+        // with the event-data fitness N ln(N/T) and the eq. 21 prior calibrated
+        // to the false-alarm probability p0. offsets: ascending months within
+        // [0, T]. Returns the block edges [0, ..., T] in months.
+        function bayesianBlocksEdges(offsets, T, p0) {
+            if (!(T > 0)) return [0, Math.max(T || 0, 0)];
+            const N = offsets.length;
+            if (N === 0) return [0, T];
+
+            // Merge tied times (day resolution makes ties common) into
+            // weighted ticks
+            let ticks = [];
+            let weights = [];
+            for (const t of offsets) {
+                if (ticks.length > 0 && t <= ticks[ticks.length - 1] + 1e-9) {
+                    weights[weights.length - 1] += 1;
+                } else {
+                    ticks.push(t);
+                    weights.push(1);
+                }
+            }
+            // The DP below is O(M^2) in the number of distinct times; quantize
+            // to a weekly grid for very long histories (negligible information
+            // loss at the block scale)
+            if (ticks.length > 2000) {
+                const WEEK_MONTHS = 7 * 12 / 365.25;
+                const merged = new Map();
+                for (let j = 0; j < ticks.length; j++) {
+                    const g = Math.round(ticks[j] / WEEK_MONTHS) * WEEK_MONTHS;
+                    merged.set(g, (merged.get(g) || 0) + weights[j]);
+                }
+                ticks = Array.from(merged.keys()).sort((a, b) => a - b);
+                weights = ticks.map(t => merged.get(t));
+            }
+            const M = ticks.length;
+
+            // Cell edges: observation start, midpoints between ticks, and end
+            const edges = new Array(M + 1);
+            edges[0] = 0;
+            for (let j = 1; j < M; j++) {
+                edges[j] = (ticks[j - 1] + ticks[j]) / 2;
+            }
+            edges[M] = T;
+
+            const cumw = new Array(M + 1).fill(0);
+            for (let j = 0; j < M; j++) cumw[j + 1] = cumw[j] + weights[j];
+
+            const ncpPrior = 4 - Math.log(73.53 * p0 * Math.pow(N, -0.478));
+
+            const best = new Array(M).fill(0);
+            const lastStart = new Array(M).fill(0);
+            for (let q = 0; q < M; q++) {
+                let bestVal = -Infinity;
+                let bestR = 0;
+                for (let r = 0; r <= q; r++) {
+                    const nk = cumw[q + 1] - cumw[r];
+                    const tk = edges[q + 1] - edges[r];
+                    if (!(tk > 0)) continue;
+                    const val = nk * (Math.log(nk) - Math.log(tk)) - ncpPrior +
+                        (r > 0 ? best[r - 1] : 0);
+                    if (val > bestVal) {
+                        bestVal = val;
+                        bestR = r;
+                    }
+                }
+                best[q] = bestVal;
+                lastStart[q] = bestR;
+            }
+
+            // Backtrack the optimal change points
+            const starts = [];
+            let q = M - 1;
+            for (;;) {
+                const r = lastStart[q];
+                starts.push(r);
+                if (r === 0) break;
+                q = r - 1;
+            }
+            starts.reverse();
+            const blockEdges = starts.map(r => edges[r]);
+            blockEdges.push(T);
+            return blockEdges;
+        }
+
+        // Rate series from Bayesian Blocks: two points per block (start and
+        // end of each rectangle), so steps sit at the actual change points.
+        // The second point of each pair carries dup for CSV de-duplication.
+        function computeBlocksRateSeries(record, Mode, nowMs) {
+            const base = getCitationOffsets(record, nowMs);
+            if (!base) {
+                return { points: [], widthMonths: '' };
+            }
+            const pubDate = base.pubDate;
+            const T = base.spanMonths;
+            const offsets = base.offsets.slice().sort((a, b) => a - b);
+
+            const edges = bayesianBlocksEdges(offsets, T, BLOCKS_P0);
+            const points = [];
+            let idx = 0;
+            for (let k = 0; k + 1 < edges.length; k++) {
+                const start = edges[k];
+                const end = edges[k + 1];
+                const width = end - start;
+                if (!(width > 0)) continue;
+                const isLast = (k + 2 === edges.length);
+                let n = 0;
+                while (idx < offsets.length && (isLast || offsets[idx] < end)) {
+                    n++;
+                    idx++;
+                }
+                const interval = poissonInterval68(n);
+                const common = {
+                    y: 12 * n / width,
+                    lo: 12 * interval[0] / width,
+                    hi: 12 * interval[1] / width,
+                    n: n,
+                    w: Math.round(width * 100) / 100,
+                    partial: isLast // block containing the present
+                };
+                points.push(Object.assign({ x: rateXValue(pubDate, start, Mode) }, common));
+                points.push(Object.assign({ x: rateXValue(pubDate, end, Mode), dup: true }, common));
+            }
+            return { points: points, widthMonths: '' };
+        }
+
         function hexToRgba(hex, alpha) {
             const r = parseInt(hex.slice(1, 3), 16);
             const g = parseInt(hex.slice(3, 5), 16);
@@ -1213,11 +1349,14 @@
             const rateCanvas = document.getElementById('rate-chart');
 
             // Show the rate controls only in rate view; the width selector acts
-            // as smoothing scale (FWHM) in smooth mode and bin width otherwise
-            document.getElementById('smooth-group').style.display = showRate ? 'flex' : 'none';
-            document.getElementById('bin-width-group').style.display = showRate ? 'flex' : 'none';
+            // as smoothing scale (FWHM) in smooth mode and bin width in binned
+            // mode, and is irrelevant for Bayesian blocks
+            const estimatorChoice = document.getElementById('rate-estimator').value;
+            document.getElementById('estimator-group').style.display = showRate ? 'flex' : 'none';
+            document.getElementById('bin-width-group').style.display =
+                showRate && estimatorChoice !== 'blocks' ? 'flex' : 'none';
             document.getElementById('bin-width-label').textContent =
-                document.getElementById('smooth-rate').checked ? 'Smoothing:' : 'Bin width:';
+                estimatorChoice === 'smooth' ? 'Smoothing:' : 'Bin width:';
 
             // Clear previous charts (both views)
             while (chartContainer.firstChild) {
@@ -1380,7 +1519,7 @@
             }
 
             const binOverride = parseInt(document.getElementById('bin-width').value) || 0;
-            const smoothRate = document.getElementById('smooth-rate').checked;
+            const estimator = document.getElementById('rate-estimator').value;
             Chart.defaults.font.family = '"Comic Sans MS", "Comic Sans", cursive';
 
             const datasets = [];
@@ -1393,20 +1532,22 @@
                     return;
                 }
 
-                const series = smoothRate ?
+                const series = estimator === 'smooth' ?
                     computeSmoothRateSeries(record, Mode, binOverride) :
-                    computeRateSeries(record, Mode, binOverride);
+                    (estimator === 'blocks' ?
+                        computeBlocksRateSeries(record, Mode) :
+                        computeRateSeries(record, Mode, binOverride));
                 if (series.points.length === 0) return;
 
                 const color = COLORS[colorIndex % COLORS.length];
                 colorIndex++;
                 const points = series.points;
-                const stepStyle = smoothRate ? false : 'middle';
+                const stepStyle = estimator === 'binned' ? 'middle' : false;
                 rateData.push({
                     recid: recid,
                     label: record.refname,
-                    estimator: smoothRate ? 'smooth' : 'binned',
-                    widthMonths: smoothRate ? series.widthMonths : series.binMonths,
+                    estimator: estimator,
+                    widthMonths: estimator === 'binned' ? series.binMonths : series.widthMonths,
                     points: points
                 });
 
@@ -1420,9 +1561,9 @@
                     stepped: stepStyle,
                     tension: 0,
                     borderWidth: 2.5,
-                    pointRadius: smoothRate ? 0 : 2.5,
-                    pointHoverRadius: smoothRate ? 3 : 4,
-                    pointHitRadius: smoothRate ? 6 : 10,
+                    pointRadius: estimator === 'binned' ? 2.5 : 0,
+                    pointHoverRadius: estimator === 'binned' ? 4 : 3,
+                    pointHitRadius: estimator === 'binned' ? 10 : 8,
                     pointBackgroundColor: (ctx) =>
                         points[ctx.dataIndex] && points[ctx.dataIndex].partial ? '#ffffff' : color,
                     segment: {
@@ -1671,7 +1812,7 @@
             updateChart();
             updateUrl();
         });
-        document.getElementById('smooth-rate').addEventListener('change', function() {
+        document.getElementById('rate-estimator').addEventListener('change', function() {
             updateChart();
             updateUrl();
         });
@@ -1713,9 +1854,15 @@
             if ([1, 3, 6, 12].includes(binParam)) {
                 document.getElementById('bin-width').value = String(binParam);
             }
-            const smoothParam = urlParams.get('smooth');
-            if (smoothParam !== null) {
-                document.getElementById('smooth-rate').checked = smoothParam.toLowerCase() !== 'false';
+            const estParam = urlParams.get('est');
+            if (['smooth', 'binned', 'blocks'].includes(estParam)) {
+                document.getElementById('rate-estimator').value = estParam;
+            } else {
+                // Legacy parameter from before the estimator selector
+                const smoothParam = urlParams.get('smooth');
+                if (smoothParam !== null && smoothParam.toLowerCase() === 'false') {
+                    document.getElementById('rate-estimator').value = 'binned';
+                }
             }
             
             if (recidsParam) {
@@ -2024,11 +2171,12 @@
             let csvContent = 'Paper,Estimator,WidthMonths,X,CitationsPerYear,ErrLow68,ErrHigh68,N,Provisional\n';
             rateData.forEach(series => {
                 series.points.forEach(p => {
+                    if (p.dup) return; // block end-points duplicate the start rows
                     const xValue = p.x instanceof Date ? p.x.toISOString().split('T')[0] : p.x;
                     csvContent += [
                         escapeCSV(series.label),
                         series.estimator,
-                        series.widthMonths,
+                        p.w !== undefined ? p.w : series.widthMonths,
                         xValue,
                         p.y.toFixed(4),
                         p.lo.toFixed(4),

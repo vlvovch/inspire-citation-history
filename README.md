@@ -23,7 +23,7 @@ While the AI coding assistant (Windsurf + Claude Sonnet 3.7) has been immensely 
 - Track citation history for multiple papers simultaneously
 - Add records by INSPIRE record ID, arXiv identifier, or DOI (also as URLs)
 - Compare citation trajectories across different papers
-- Citation rate view: time-dependent citation rate (citations/year) with 68% uncertainty bands, treating citations as an inhomogeneous Poisson process. Smooth (boundary-corrected Gaussian kernel) estimate by default, with an optional binned histogram
+- Citation rate view: time-dependent citation rate (citations/year) with 68% uncertainty bands, treating citations as an inhomogeneous Poisson process. Three estimators: smooth (boundary-corrected Gaussian kernel, default), binned histogram, and Bayesian blocks (optimal change-point segmentation, [Scargle et al. 2013](https://arxiv.org/abs/1207.5578))
 - Option to align timelines to normalize publication dates
 - Read multiple INSPIRE-HEP record IDs through URL
 - Export the graph to a file
@@ -35,7 +35,7 @@ While the AI coding assistant (Windsurf + Claude Sonnet 3.7) has been immensely 
 3. Click "Add record" to add the paper to your visualization
 4. Add multiple papers to compare citation histories
 5. Toggle "Align timeline" to normalize all citation histories to start at the same point
-6. Toggle "Citation rate" to switch from the cumulative citation count to the citation rate (citations per year), shown with 68% Poisson uncertainty bands. By default the rate is a smooth kernel estimate; uncheck "Smooth" for a binned histogram instead. The smoothing scale / bin width is chosen automatically and can be overridden. The part of the curve near the present is drawn dashed since recent citations may not be indexed yet
+6. Toggle "Citation rate" to switch from the cumulative citation count to the citation rate (citations per year), shown with 68% Poisson uncertainty bands. The estimator selector offers a smooth kernel estimate (default), a binned histogram, and Bayesian blocks — an optimal piecewise-constant segmentation whose steps sit at data-determined change points, useful for spotting when interest in a paper jumped. The smoothing scale / bin width is chosen automatically and can be overridden. The part of the curve near the present is drawn dashed since recent citations may not be indexed yet
 7. Click "Clear all" to remove all records and reset the chart
 
 In the rate view, the CSV export contains the rate series (rate, 68% interval bounds, and the per-point citation count or effective count) instead of the cumulative counts.
@@ -44,7 +44,7 @@ In the rate view, the CSV export contains the rate series (rate, 68% interval bo
 
 You can also directly share specific citation histories by using URL parameters, for example: [https://vovchenko.net/inspire-citation-history/?recids=1850675-1914564](https://vovchenko.net/inspire-citation-history/?recids=1850675-1914564)
 
-Supported parameters: `recids` (dash-separated record IDs), `align=true` (align timelines), `rate=true` (citation rate view), `smooth=false` (binned instead of smooth rate), and `bin` (smoothing scale / bin width in months: 1, 3, 6, or 12; omit for automatic)
+Supported parameters: `recids` (dash-separated record IDs), `align=true` (align timelines), `rate=true` (citation rate view), `est` (rate estimator: `binned` or `blocks`; smooth is the default), and `bin` (smoothing scale / bin width in months: 1, 3, 6, or 12; omit for automatic)
 
 ### Example Queries
 

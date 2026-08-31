@@ -56,8 +56,8 @@ const section = scriptBody.slice(sectionStart, sectionEnd)
     + '\n' + scriptBody.slice(cacheStart, cacheEnd);
 const sandbox = {};
 vm.createContext(sandbox);
-vm.runInContext(section + '\nthis.poissonInterval68 = poissonInterval68; this.chooseBinWidthMonths = chooseBinWidthMonths; this.computeRateSeries = computeRateSeries; this.hexToRgba = hexToRgba; this.erf = erf; this.normCdf = normCdf; this.computeSmoothRateSeries = computeSmoothRateSeries; this.presentRateLabelPlugin = presentRateLabelPlugin; this.parseRecordIdentifier = parseRecordIdentifier; this.computeBackoffDelayMs = computeBackoffDelayMs; this.cacheLoad = cacheLoad; this.cacheSave = cacheSave; this.cacheEvictOldest = cacheEvictOldest; this.cacheKeys = cacheKeys; this.safeLocalStorage = safeLocalStorage; this.CACHE_PREFIX = CACHE_PREFIX; this.CACHE_TTL_MS = CACHE_TTL_MS; this.CACHE_MAX_ENTRIES = CACHE_MAX_ENTRIES;', sandbox);
-const { poissonInterval68, chooseBinWidthMonths, computeRateSeries, hexToRgba, erf, normCdf, computeSmoothRateSeries, presentRateLabelPlugin, parseRecordIdentifier, computeBackoffDelayMs, cacheLoad, cacheSave, cacheEvictOldest, cacheKeys, safeLocalStorage, CACHE_PREFIX, CACHE_TTL_MS, CACHE_MAX_ENTRIES } = sandbox;
+vm.runInContext(section + '\nthis.poissonInterval68 = poissonInterval68; this.chooseBinWidthMonths = chooseBinWidthMonths; this.computeRateSeries = computeRateSeries; this.hexToRgba = hexToRgba; this.erf = erf; this.normCdf = normCdf; this.computeSmoothRateSeries = computeSmoothRateSeries; this.presentRateLabelPlugin = presentRateLabelPlugin; this.parseRecordIdentifier = parseRecordIdentifier; this.computeBackoffDelayMs = computeBackoffDelayMs; this.cacheLoad = cacheLoad; this.cacheSave = cacheSave; this.cacheEvictOldest = cacheEvictOldest; this.cacheKeys = cacheKeys; this.safeLocalStorage = safeLocalStorage; this.CACHE_PREFIX = CACHE_PREFIX; this.CACHE_TTL_MS = CACHE_TTL_MS; this.CACHE_MAX_ENTRIES = CACHE_MAX_ENTRIES; this.bayesianBlocksEdges = bayesianBlocksEdges; this.computeBlocksRateSeries = computeBlocksRateSeries; this.BLOCKS_P0 = BLOCKS_P0;', sandbox);
+const { poissonInterval68, chooseBinWidthMonths, computeRateSeries, hexToRgba, erf, normCdf, computeSmoothRateSeries, presentRateLabelPlugin, parseRecordIdentifier, computeBackoffDelayMs, cacheLoad, cacheSave, cacheEvictOldest, cacheKeys, safeLocalStorage, CACHE_PREFIX, CACHE_TTL_MS, CACHE_MAX_ENTRIES, bayesianBlocksEdges, computeBlocksRateSeries, BLOCKS_P0 } = sandbox;
 
 // Deterministic PRNG (mulberry32) so stochastic checks are reproducible
 let __seed = 0xC0FFEE;
@@ -399,6 +399,82 @@ const sampleRecord = { recid: 42, date: '2020-01-01', refname: 'X et al.', citat
     check('foreign keys untouched by eviction', st.getItem('user-setting') === 'keep-me' && cacheKeys(st).length === 0);
 }
 check('safeLocalStorage null outside the browser', safeLocalStorage() === null);
+
+// --- Bayesian blocks ---
+function blockCount(series) { return series.points.length / 2; }
+function blockEdgesFromSeries(series) { // Mode 1 -> numeric months
+    const e = [series.points[0].x];
+    for (let i = 1; i < series.points.length; i += 2) e.push(series.points[i].x);
+    return e;
+}
+{
+    const s = computeBlocksRateSeries(record, 1, nowMs);
+    const starts = s.points.filter((p, i) => i % 2 === 0);
+    const nTot = starts.reduce((a, p) => a + p.n, 0);
+    check('blocks: counts sum to N', nTot === dates.length, nTot + ' vs ' + dates.length);
+    check('blocks: constant rate -> 1-2 blocks', blockCount(s) >= 1 && blockCount(s) <= 2, 'got ' + blockCount(s));
+    const wmean = starts.reduce((a, p) => a + p.y * p.w, 0) / starts.reduce((a, p) => a + p.w, 0);
+    check(`blocks: width-weighted mean rate = 12N/T (${(12 * dates.length / 48).toFixed(1)})`,
+        Math.abs(wmean - 12 * dates.length / 48) < 1.5, 'got ' + wmean.toFixed(1));
+    check('blocks: spans [0, T]', Math.abs(s.points[0].x) < 1e-9 && Math.abs(s.points[s.points.length - 1].x - 48) < 1e-6);
+    check('blocks: pairs share y/n, dup on seconds, partial only last pair', s.points.every((p, i, a) =>
+        (i % 2 === 1 ? p.y === a[i - 1].y && p.n === a[i - 1].n && p.dup === true : p.dup === undefined) &&
+        (p.partial === (i >= a.length - 2))));
+}
+{
+    // Step: 3/mo for 24 months, then 12/mo for another 24
+    const stepDates = [];
+    let t = pub.getTime();
+    for (;;) { t += -Math.log(1 - Math.random()) / 3 * MS_PER_MONTH; if (t > pub.getTime() + 24 * MS_PER_MONTH) break; stepDates.push(new Date(t).toISOString()); }
+    t = pub.getTime() + 24 * MS_PER_MONTH;
+    for (;;) { t += -Math.log(1 - Math.random()) / 12 * MS_PER_MONTH; if (t > nowMs) break; stepDates.push(new Date(t).toISOString()); }
+    const s = computeBlocksRateSeries({ date: pub.toISOString(), citation_dates: stepDates }, 1, nowMs);
+    const edges = blockEdgesFromSeries(s);
+    check('blocks: step detected (>= 2 blocks)', blockCount(s) >= 2, 'got ' + blockCount(s));
+    const interior = edges.slice(1, -1);
+    check('blocks: change point within 3 months of true step at 24',
+        interior.some(e => Math.abs(e - 24) < 3), JSON.stringify(interior));
+    const first = s.points[0], last = s.points[s.points.length - 1];
+    check(`blocks: first block rate ~ 36/yr (got ${first.y.toFixed(1)})`, Math.abs(first.y - 36) < 14);
+    check(`blocks: last block rate ~ 144/yr (got ${last.y.toFixed(1)})`, Math.abs(last.y - 144) < 36);
+}
+{
+    // Burst: 2/mo baseline plus 30/mo during months [20, 24]
+    const burstDates = [];
+    let t = pub.getTime();
+    for (;;) { t += -Math.log(1 - Math.random()) / 2 * MS_PER_MONTH; if (t > nowMs) break; burstDates.push(new Date(t).toISOString()); }
+    t = pub.getTime() + 20 * MS_PER_MONTH;
+    for (;;) { t += -Math.log(1 - Math.random()) / 30 * MS_PER_MONTH; if (t > pub.getTime() + 24 * MS_PER_MONTH) break; burstDates.push(new Date(t).toISOString()); }
+    const s = computeBlocksRateSeries({ date: pub.toISOString(), citation_dates: burstDates }, 1, nowMs);
+    const starts = s.points.filter((p, i) => i % 2 === 0);
+    const hot = starts.filter(p => p.y > 250);
+    check('blocks: burst isolated as a high-rate block', blockCount(s) >= 3 && hot.length >= 1,
+        'blocks=' + blockCount(s) + ' hot=' + hot.length);
+    if (hot.length >= 1) {
+        const mid = hot[0].x + hot[0].w / 2;
+        check(`blocks: burst block centered in [18.5, 25.5] (mid ${mid.toFixed(1)})`, mid > 18.5 && mid < 25.5);
+    }
+}
+check('blocks: empty record -> single zero block with upper limit', (() => {
+    const s = computeBlocksRateSeries({ date: pub.toISOString(), citation_dates: [] }, 1, nowMs);
+    return blockCount(s) === 1 && s.points[0].y === 0 && s.points[0].hi > 0 && s.points[0].partial === true;
+})());
+check('blocks: single citation -> single block n=1', (() => {
+    const s = computeBlocksRateSeries({ date: pub.toISOString(), citation_dates: ['2021-06-01'] }, 1, nowMs);
+    return blockCount(s) === 1 && s.points[0].n === 1;
+})());
+check('blocks: Mode 0 x values are Dates', (() => {
+    const s = computeBlocksRateSeries(record, 0, nowMs);
+    return Object.prototype.toString.call(s.points[0].x) === '[object Date]';
+})());
+check('blocks: weekly quantization path preserves counts', (() => {
+    const many = [];
+    for (let i = 0; i < 6000; i++) many.push(new Date(pub.getTime() + Math.random() * 250 * MS_PER_MONTH).toISOString());
+    const nowBig = pub.getTime() + 250 * MS_PER_MONTH;
+    const s = computeBlocksRateSeries({ date: pub.toISOString(), citation_dates: many }, 1, nowBig);
+    return s.points.filter((p, i) => i % 2 === 0).reduce((a, p) => a + p.n, 0) === 6000;
+})());
+check('bayesianBlocksEdges: no events -> [0, T]', JSON.stringify(bayesianBlocksEdges([], 10, BLOCKS_P0)) === '[0,10]');
 
 console.log(failures === 0 ? '\nALL TESTS PASSED' : `\n${failures} TEST(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);
