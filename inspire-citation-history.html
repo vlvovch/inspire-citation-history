@@ -232,11 +232,9 @@
         
         <div class="repo-list" id="recid-list"></div>
         
+        <!-- Right-aligned row: the rate-only selector groups come first so
+             toggling them in and out never moves the checkboxes after them -->
         <div class="align-checkbox">
-            <div style="display: flex; align-items: center; margin-right: 20px;">
-                <input type="checkbox" id="show-rate" />
-                <label for="show-rate" style="margin-left: 5px;">Citation rate</label>
-            </div>
             <div id="estimator-group" style="display: none; align-items: center; margin-right: 20px;">
                 <label for="rate-estimator" style="margin-right: 5px;">Estimator:</label>
                 <select id="rate-estimator">
@@ -262,6 +260,10 @@
                     <option value="6">6 months</option>
                     <option value="12">1 year</option>
                 </select>
+            </div>
+            <div style="display: flex; align-items: center; margin-right: 20px;">
+                <input type="checkbox" id="show-rate" />
+                <label for="show-rate" style="margin-left: 5px;">Citation rate</label>
             </div>
             <div id="wsb-group" style="display: none; align-items: center; margin-right: 20px;">
                 <input type="checkbox" id="wsb-fit" />
