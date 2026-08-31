@@ -2210,14 +2210,16 @@
                 if (v < xMin) xMin = v;
                 if (v > xMax) xMax = v;
             }));
+            // Label width estimate: the xkcd font measures ~4.4-4.9px per
+            // character at font-size 12, plus the 8px gap and a little tail
             let labelPx = 0;
             papers.forEach(paper => {
                 presentRateLines(paper.last, paper.fit).forEach(line => {
-                    labelPx = Math.max(labelPx, 10 + line.length * 6.6);
+                    labelPx = Math.max(labelPx, 14 + line.length * 5);
                 });
             });
             const plotW = Math.max((chartContainer.parentElement.clientWidth || 600) - 100, 220);
-            const padFrac = Math.min(0.4, Math.min(150, Math.max(55, labelPx)) / plotW);
+            const padFrac = Math.min(0.4, Math.min(150, Math.max(48, labelPx)) / plotW);
             const padX = xMax + Math.max(xMax - xMin, 1) * padFrac / (1 - padFrac);
             datasets.push({ label: '', data: [{ x: Mode === 0 ? new Date(padX) : padX, y: 0 }] });
             dataColors.push('rgba(0,0,0,0)');
