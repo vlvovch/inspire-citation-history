@@ -426,13 +426,13 @@ check('safeLocalStorage null outside the browser', safeLocalStorage() === null);
 // --- Bayesian blocks ---
 function blockCount(series) { return series.points.filter(p => !p.dup).length; }
 function blockEdgesFromSeries(series) { // Mode 1 -> numeric months
-    const e = series.points.filter(p => !p.dup).map(p => p.x);
+    const e = series.points.filter(p => !p.dup).map(p => (p.trueX !== undefined ? p.trueX : p.x));
     e.push(series.points[series.points.length - 1].x);
     return e;
 }
 function blockStarts(series) { return series.points.filter(p => !p.dup); }
 {
-    const s = computeBlocksRateSeries(record, 1, nowMs);
+    const s = computeBlocksRateSeries(record, 1, BLOCKS_P0, nowMs);
     const starts = blockStarts(s);
     const nTot = starts.reduce((a, p) => a + p.n, 0);
     check('blocks: counts sum to N', nTot === dates.length, nTot + ' vs ' + dates.length);
@@ -449,7 +449,7 @@ function blockStarts(series) { return series.points.filter(p => !p.dup); }
         if (!s.points.slice(f).every(p => p.partial)) return false;
         if (s.points.length - f > 2) return false;
         const anchor = f > 0 ? s.points[f - 1].x : 0;
-        return s.points[s.points.length - 1].x - anchor <= 1.05;
+        return s.points[s.points.length - 1].x - anchor <= 1.6; // tail plus at most one ramp
     })());
     check('blocks: all block widths >= 1 month', starts.every(p => p.w >= 0.99),
         JSON.stringify(starts.map(p => p.w)));
@@ -461,7 +461,7 @@ function blockStarts(series) { return series.points.filter(p => !p.dup); }
     for (;;) { t += -Math.log(1 - Math.random()) / 3 * MS_PER_MONTH; if (t > pub.getTime() + 24 * MS_PER_MONTH) break; stepDates.push(new Date(t).toISOString()); }
     t = pub.getTime() + 24 * MS_PER_MONTH;
     for (;;) { t += -Math.log(1 - Math.random()) / 12 * MS_PER_MONTH; if (t > nowMs) break; stepDates.push(new Date(t).toISOString()); }
-    const s = computeBlocksRateSeries({ date: pub.toISOString(), citation_dates: stepDates }, 1, nowMs);
+    const s = computeBlocksRateSeries({ date: pub.toISOString(), citation_dates: stepDates }, 1, BLOCKS_P0, nowMs);
     const edges = blockEdgesFromSeries(s);
     check('blocks: step detected (>= 2 blocks)', blockCount(s) >= 2, 'got ' + blockCount(s));
     const interior = edges.slice(1, -1);
@@ -478,7 +478,7 @@ function blockStarts(series) { return series.points.filter(p => !p.dup); }
     for (;;) { t += -Math.log(1 - Math.random()) / 2 * MS_PER_MONTH; if (t > nowMs) break; burstDates.push(new Date(t).toISOString()); }
     t = pub.getTime() + 20 * MS_PER_MONTH;
     for (;;) { t += -Math.log(1 - Math.random()) / 30 * MS_PER_MONTH; if (t > pub.getTime() + 24 * MS_PER_MONTH) break; burstDates.push(new Date(t).toISOString()); }
-    const s = computeBlocksRateSeries({ date: pub.toISOString(), citation_dates: burstDates }, 1, nowMs);
+    const s = computeBlocksRateSeries({ date: pub.toISOString(), citation_dates: burstDates }, 1, BLOCKS_P0, nowMs);
     const starts = blockStarts(s);
     const hot = starts.filter(p => p.y > 250);
     check('blocks: burst isolated as a high-rate block', blockCount(s) >= 3 && hot.length >= 1,
@@ -489,12 +489,12 @@ function blockStarts(series) { return series.points.filter(p => !p.dup); }
     }
 }
 check('blocks: empty record -> single zero block with upper limit', (() => {
-    const s = computeBlocksRateSeries({ date: pub.toISOString(), citation_dates: [] }, 1, nowMs);
+    const s = computeBlocksRateSeries({ date: pub.toISOString(), citation_dates: [] }, 1, BLOCKS_P0, nowMs);
     return blockCount(s) === 1 && s.points[0].y === 0 && s.points[0].hi > 0 &&
         s.points[s.points.length - 1].partial === true;
 })());
 check('blocks: single citation -> single block n=1', (() => {
-    const s = computeBlocksRateSeries({ date: pub.toISOString(), citation_dates: ['2021-06-01'] }, 1, nowMs);
+    const s = computeBlocksRateSeries({ date: pub.toISOString(), citation_dates: ['2021-06-01'] }, 1, BLOCKS_P0, nowMs);
     return blockCount(s) === 1 && s.points[0].n === 1;
 })());
 check('blocks: clamped pileup capped by the minimum block width', (() => {
@@ -503,22 +503,49 @@ check('blocks: clamped pileup capped by the minimum block width', (() => {
     const pileDates = [];
     for (let i = 0; i < 30; i++) pileDates.push('2019-06-01');
     for (let i = 0; i < 100; i++) pileDates.push(new Date(pub.getTime() + Math.random() * 40 * MS_PER_MONTH).toISOString());
-    const s = computeBlocksRateSeries({ date: pub.toISOString(), citation_dates: pileDates }, 1, pub.getTime() + 40 * MS_PER_MONTH);
+    const s = computeBlocksRateSeries({ date: pub.toISOString(), citation_dates: pileDates }, 1, BLOCKS_P0, pub.getTime() + 40 * MS_PER_MONTH);
     const starts = blockStarts(s);
     return starts.every(p => p.w >= 0.99) && Math.max(...starts.map(p => p.y)) < 700;
 })());
 check('blocks: Mode 0 x values are Dates', (() => {
-    const s = computeBlocksRateSeries(record, 0, nowMs);
+    const s = computeBlocksRateSeries(record, 0, BLOCKS_P0, nowMs);
     return Object.prototype.toString.call(s.points[0].x) === '[object Date]';
 })());
 check('blocks: weekly quantization path preserves counts', (() => {
     const many = [];
     for (let i = 0; i < 6000; i++) many.push(new Date(pub.getTime() + Math.random() * 250 * MS_PER_MONTH).toISOString());
     const nowBig = pub.getTime() + 250 * MS_PER_MONTH;
-    const s = computeBlocksRateSeries({ date: pub.toISOString(), citation_dates: many }, 1, nowBig);
+    const s = computeBlocksRateSeries({ date: pub.toISOString(), citation_dates: many }, 1, BLOCKS_P0, nowBig);
     return blockStarts(s).reduce((a, p) => a + p.n, 0) === 6000;
 })());
 check('bayesianBlocksEdges: no events -> [0, T]', JSON.stringify(bayesianBlocksEdges([], 10, BLOCKS_P0)) === '[0,10]');
+check('blocks: ramped x strictly increasing, trueX on block starts', (() => {
+    const stepDates2 = [];
+    let t2 = pub.getTime();
+    for (;;) { t2 += -Math.log(1 - Math.random()) / 3 * MS_PER_MONTH; if (t2 > pub.getTime() + 24 * MS_PER_MONTH) break; stepDates2.push(new Date(t2).toISOString()); }
+    t2 = pub.getTime() + 24 * MS_PER_MONTH;
+    for (;;) { t2 += -Math.log(1 - Math.random()) / 12 * MS_PER_MONTH; if (t2 > nowMs) break; stepDates2.push(new Date(t2).toISOString()); }
+    const s = computeBlocksRateSeries({ date: pub.toISOString(), citation_dates: stepDates2 }, 1, BLOCKS_P0, nowMs);
+    return s.points.every((p, i, a) => i === 0 || p.x > a[i - 1].x) &&
+        blockStarts(s).every(p => p.trueX !== undefined);
+})());
+{
+    // p0 sensitivity: a gentle ramp splits under eager but stays whole (or
+    // splits less) under strict
+    const rampDates = [];
+    let t = pub.getTime();
+    for (;;) {
+        t += -Math.log(1 - Math.random()) / 6.5 * MS_PER_MONTH;
+        if (t > nowMs) break;
+        const frac = (t - pub.getTime()) / (48 * MS_PER_MONTH);
+        if (Math.random() < (3.75 + 2.5 * frac) / 6.5) rampDates.push(new Date(t).toISOString());
+    }
+    const rec = { date: pub.toISOString(), citation_dates: rampDates };
+    const nStrict = blockCount(computeBlocksRateSeries(rec, 1, 0.05, nowMs));
+    const nEager = blockCount(computeBlocksRateSeries(rec, 1, 0.9, nowMs));
+    check(`p0 controls sensitivity (strict ${nStrict} <= eager ${nEager} and eager >= 2)`,
+        nStrict <= nEager && nEager >= 2);
+}
 
 // --- Imprecise-date spreading ---
 {

@@ -161,9 +161,21 @@ document.addEventListener('DOMContentLoaded', () => {
         var nBlocksK = dsK.data.filter(function (pt) { return !pt.dup; }).length;
         smokeLog('blocks: few blocks for featureless data', nBlocksK >= 1 && nBlocksK <= 4, 'blocks=' + nBlocksK);
         smokeLog('blocks: width selector hidden', document.getElementById('bin-width-group').style.display === 'none');
+        smokeLog('blocks: sensitivity selector shown', document.getElementById('p0-group').style.display === 'flex');
+        smokeLog('blocks: rounded-corner interpolation', dsK.cubicInterpolationMode === 'monotone');
+        smokeLog('blocks: ramped x strictly increasing', dsK.data.every(function (pt, i, a) { return i === 0 || pt.x > a[i - 1].x; }));
         smokeLog('blocks: rateData estimator label', rateData[0].estimator === 'blocks');
         updateUrl();
         smokeLog('url carries est=blocks', location.search.indexOf('est=blocks') >= 0, location.search);
+
+        document.getElementById('blocks-p0').value = '0.9';
+        updateChart();
+        updateUrl();
+        smokeLog('url carries p0=0.9 when eager', location.search.indexOf('p0=0.9') >= 0, location.search);
+        document.getElementById('blocks-p0').value = '0.05';
+        updateChart();
+        updateUrl();
+        smokeLog('p0 param dropped at strict default', location.search.indexOf('p0=') < 0, location.search);
 
         document.getElementById('rate-estimator').value = 'smooth';
         updateChart();
@@ -173,6 +185,7 @@ document.addEventListener('DOMContentLoaded', () => {
             'width=' + rateData[0].widthMonths);
         updateUrl();
         smokeLog('est param removed when back to default', location.search.indexOf('est=') < 0, location.search);
+        smokeLog('sensitivity selector hidden outside blocks', document.getElementById('p0-group').style.display === 'none');
 
         document.getElementById('show-rate').checked = false;
         updateChart();
@@ -216,6 +229,9 @@ document.addEventListener('DOMContentLoaded', () => {
         history.pushState({}, '', '?rate=true&smooth=false');
         parseUrlParams();
         smokeLog('legacy smooth=false maps to binned', document.getElementById('rate-estimator').value === 'binned');
+        history.pushState({}, '', '?rate=true&est=blocks&p0=0.9');
+        parseUrlParams();
+        smokeLog('p0 URL parameter parsed', document.getElementById('blocks-p0').value === '0.9');
     } catch (err) {
         smokeLog('EXCEPTION: ' + err.message + ' @ ' + ((err.stack || '').split('\\n')[1] || ''), false);
     }

@@ -209,6 +209,14 @@
                     <option value="blocks">Bayesian blocks</option>
                 </select>
             </div>
+            <div id="p0-group" style="display: none; align-items: center; margin-right: 20px;">
+                <label for="blocks-p0" style="margin-right: 5px;">Sensitivity:</label>
+                <select id="blocks-p0">
+                    <option value="0.05">Strict</option>
+                    <option value="0.3">Moderate</option>
+                    <option value="0.9">Eager</option>
+                </select>
+            </div>
             <div id="bin-width-group" style="display: none; align-items: center; margin-right: 20px;">
                 <label for="bin-width" id="bin-width-label" style="margin-right: 5px;">Smoothing:</label>
                 <select id="bin-width">
@@ -373,11 +381,19 @@
                         url.searchParams.delete('est');
                     }
                     url.searchParams.delete('smooth'); // legacy parameter
+                    // Blocks sensitivity, when not the strict default
+                    const p0Value = document.getElementById('blocks-p0').value;
+                    if (estimatorChoice === 'blocks' && p0Value !== '0.05') {
+                        url.searchParams.set('p0', p0Value);
+                    } else {
+                        url.searchParams.delete('p0');
+                    }
                 } else {
                     url.searchParams.delete('rate');
                     url.searchParams.delete('bin');
                     url.searchParams.delete('smooth');
                     url.searchParams.delete('est');
+                    url.searchParams.delete('p0');
                 }
             } else {
                 // Remove all parameters if no records
@@ -387,6 +403,7 @@
                 url.searchParams.delete('bin');
                 url.searchParams.delete('smooth');
                 url.searchParams.delete('est');
+                url.searchParams.delete('p0');
             }
             
             // Update the URL without reloading the page
@@ -1350,10 +1367,13 @@
             return blockEdges;
         }
 
-        // Rate series from Bayesian Blocks: two points per block (start and
-        // end of each rectangle), so steps sit at the actual change points.
-        // The second point of each pair carries dup for CSV de-duplication.
-        function computeBlocksRateSeries(record, Mode, nowMs) {
+        // Rate series from Bayesian Blocks. Steps are drawn with short
+        // symmetric ramps around each change point (a fixed small fraction of
+        // the span, so a few pixels at any zoom) which the chart renders with
+        // rounded corners; the true change-point date is kept in trueX on the
+        // first point of each block for the CSV export. Points with dup are
+        // continuation points of the same block.
+        function computeBlocksRateSeries(record, Mode, p0, nowMs) {
             const base = getCitationOffsets(record, nowMs);
             if (!base) {
                 return { points: [], widthMonths: '' };
@@ -1362,8 +1382,10 @@
             const T = base.spanMonths;
             const offsets = base.offsets.slice().sort((a, b) => a - b);
 
-            const edges = bayesianBlocksEdges(offsets, T, BLOCKS_P0);
-            const points = [];
+            const edges = bayesianBlocksEdges(offsets, T, p0 || BLOCKS_P0);
+
+            // Per-block statistics
+            const blocks = [];
             let idx = 0;
             for (let k = 0; k + 1 < edges.length; k++) {
                 const start = edges[k];
@@ -1377,26 +1399,55 @@
                     idx++;
                 }
                 const interval = poissonInterval68(n);
-                const common = {
+                blocks.push({
+                    start: start, end: end, width: width, n: n,
                     y: 12 * n / width,
                     lo: 12 * interval[0] / width,
-                    hi: 12 * interval[1] / width,
-                    n: n,
-                    w: Math.round(width * 100) / 100
+                    hi: 12 * interval[1] / width
+                });
+            }
+
+            const ramp = Math.min(3, Math.max(0.25, 0.008 * T));
+            const points = [];
+            for (let k = 0; k < blocks.length; k++) {
+                const b = blocks[k];
+                const isLast = (k === blocks.length - 1);
+                const dL = k === 0 ? 0 :
+                    Math.min(ramp, 0.45 * blocks[k - 1].width, 0.45 * b.width);
+                const dR = isLast ? 0 :
+                    Math.min(ramp, 0.45 * b.width, 0.45 * blocks[k + 1].width);
+                const common = {
+                    y: b.y, lo: b.lo, hi: b.hi, n: b.n,
+                    w: Math.round(b.width * 100) / 100
                 };
                 // Only the last ~month before the present is provisional
-                // (indexing lag), so confine the dashed tail to it instead of
-                // dashing a possibly years-wide current block
+                // (indexing lag): confine the dashed tail to it
+                const wholeTail = isLast && b.width <= BLOCKS_TAIL_MONTHS;
+                points.push(Object.assign({
+                    x: rateXValue(pubDate, b.start + dL, Mode),
+                    trueX: rateXValue(pubDate, b.start, Mode),
+                    partial: wholeTail
+                }, common));
                 if (!isLast) {
-                    points.push(Object.assign({ x: rateXValue(pubDate, start, Mode), partial: false }, common));
-                    points.push(Object.assign({ x: rateXValue(pubDate, end, Mode), dup: true, partial: false }, common));
-                } else if (width <= BLOCKS_TAIL_MONTHS) {
-                    points.push(Object.assign({ x: rateXValue(pubDate, start, Mode), partial: true }, common));
-                    points.push(Object.assign({ x: rateXValue(pubDate, end, Mode), dup: true, partial: true }, common));
+                    points.push(Object.assign({
+                        x: rateXValue(pubDate, b.end - dR, Mode),
+                        dup: true, partial: false
+                    }, common));
+                } else if (wholeTail) {
+                    points.push(Object.assign({
+                        x: rateXValue(pubDate, b.end, Mode),
+                        dup: true, partial: true
+                    }, common));
                 } else {
-                    points.push(Object.assign({ x: rateXValue(pubDate, start, Mode), partial: false }, common));
-                    points.push(Object.assign({ x: rateXValue(pubDate, end - BLOCKS_TAIL_MONTHS, Mode), dup: true, partial: false }, common));
-                    points.push(Object.assign({ x: rateXValue(pubDate, end, Mode), dup: true, partial: true }, common));
+                    const tailStart = Math.max(b.end - BLOCKS_TAIL_MONTHS, b.start + dL + 0.05);
+                    points.push(Object.assign({
+                        x: rateXValue(pubDate, tailStart, Mode),
+                        dup: true, partial: false
+                    }, common));
+                    points.push(Object.assign({
+                        x: rateXValue(pubDate, b.end, Mode),
+                        dup: true, partial: true
+                    }, common));
                 }
             }
             return { points: points, widthMonths: '' };
@@ -1425,6 +1476,8 @@
             document.getElementById('estimator-group').style.display = showRate ? 'flex' : 'none';
             document.getElementById('bin-width-group').style.display =
                 showRate && estimatorChoice !== 'blocks' ? 'flex' : 'none';
+            document.getElementById('p0-group').style.display =
+                showRate && estimatorChoice === 'blocks' ? 'flex' : 'none';
             document.getElementById('bin-width-label').textContent =
                 estimatorChoice === 'smooth' ? 'Smoothing:' : 'Bin width:';
 
@@ -1590,6 +1643,7 @@
 
             const binOverride = parseInt(document.getElementById('bin-width').value) || 0;
             const estimator = document.getElementById('rate-estimator').value;
+            const blocksP0 = parseFloat(document.getElementById('blocks-p0').value) || BLOCKS_P0;
             Chart.defaults.font.family = '"Comic Sans MS", "Comic Sans", cursive';
 
             const datasets = [];
@@ -1605,7 +1659,7 @@
                 const series = estimator === 'smooth' ?
                     computeSmoothRateSeries(record, Mode, binOverride) :
                     (estimator === 'blocks' ?
-                        computeBlocksRateSeries(record, Mode) :
+                        computeBlocksRateSeries(record, Mode, blocksP0) :
                         computeRateSeries(record, Mode, binOverride));
                 if (series.points.length === 0) return;
 
@@ -1630,6 +1684,7 @@
                     backgroundColor: color,
                     stepped: stepStyle,
                     tension: 0,
+                    cubicInterpolationMode: estimator === 'blocks' ? 'monotone' : 'default',
                     borderWidth: 2.5,
                     pointRadius: estimator === 'binned' ? 2.5 : 0,
                     pointHoverRadius: estimator === 'binned' ? 4 : 3,
@@ -1650,6 +1705,7 @@
                     pointHitRadius: 0,
                     stepped: stepStyle,
                     tension: 0,
+                    cubicInterpolationMode: estimator === 'blocks' ? 'monotone' : 'default',
                     backgroundColor: 'transparent'
                 });
                 datasets.push({
@@ -1660,6 +1716,7 @@
                     pointHitRadius: 0,
                     stepped: stepStyle,
                     tension: 0,
+                    cubicInterpolationMode: estimator === 'blocks' ? 'monotone' : 'default',
                     fill: '-1',
                     backgroundColor: hexToRgba(color, 0.18)
                 });
@@ -1933,6 +1990,10 @@
                 if (smoothParam !== null && smoothParam.toLowerCase() === 'false') {
                     document.getElementById('rate-estimator').value = 'binned';
                 }
+            }
+            const p0Param = urlParams.get('p0');
+            if (['0.05', '0.3', '0.9'].includes(p0Param)) {
+                document.getElementById('blocks-p0').value = p0Param;
             }
             
             if (recidsParam) {
@@ -2244,7 +2305,8 @@
             rateData.forEach(series => {
                 series.points.forEach(p => {
                     if (p.dup) return; // block end-points duplicate the start rows
-                    const xValue = p.x instanceof Date ? p.x.toISOString().split('T')[0] : p.x;
+                    const xRaw = p.trueX !== undefined ? p.trueX : p.x;
+                    const xValue = xRaw instanceof Date ? xRaw.toISOString().split('T')[0] : xRaw;
                     csvContent += [
                         escapeCSV(series.label),
                         series.estimator,
