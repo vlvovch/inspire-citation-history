@@ -573,6 +573,37 @@ check('blocks: ramped x strictly increasing, trueX on block starts', (() => {
     const byRecid = arr => JSON.stringify(arr.slice().sort((a, b) => a.recid - b.recid));
     check('spread: deterministic regardless of arrival order', byRecid(shuffled) === byRecid(ordered));
 }
+check('spread: Jan 1 dates treated as year precision', (() => {
+    const cs = [];
+    for (let i = 0; i < 10; i++) cs.push({ date: '2011-01-01', recid: 200 + i });
+    spreadImpreciseDates(cs, Date.UTC(2020, 0, 1));
+    const ds = cs.map(c => c.date);
+    return ds.every(d => d >= '2011-01-01' && d <= '2011-12-31') &&
+        ds.filter(d => d === '2011-01-01').length === 0 &&
+        ds.some(d => d > '2011-06-01');
+})());
+check('spread: 1st-of-month dates treated as month precision', (() => {
+    const cs = [];
+    for (let i = 0; i < 6; i++) cs.push({ date: '2011-05-01', recid: 300 + i });
+    spreadImpreciseDates(cs, Date.UTC(2020, 0, 1));
+    return cs.every(c => c.date >= '2011-05-01' && c.date <= '2011-05-31') &&
+        cs.filter(c => c.date === '2011-05-01').length === 0;
+})());
+check('spread: Jan 1 merges with plain year-only groups', (() => {
+    const cs = [
+        { date: '2011', recid: 1 }, { date: '2011-01-01', recid: 2 },
+        { date: '2011', recid: 3 }, { date: '2011-01-01', recid: 4 }
+    ];
+    spreadImpreciseDates(cs, Date.UTC(2020, 0, 1));
+    const ds = cs.map(c => c.date).sort();
+    return ds.every(d => d >= '2011-01-01' && d <= '2011-12-31') &&
+        new Set(ds).size === 4;
+})());
+check('spread: genuine mid-month dates untouched', (() => {
+    const cs = [{ date: '2011-05-02', recid: 1 }, { date: '2011-12-31', recid: 2 }];
+    spreadImpreciseDates(cs, Date.UTC(2020, 0, 1));
+    return cs[0].date === '2011-05-02' && cs[1].date === '2011-12-31';
+})());
 check('spread: current year capped at the present', (() => {
     const now26 = Date.UTC(2026, 7, 31); // Aug 31, 2026
     const cs = [];

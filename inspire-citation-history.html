@@ -540,7 +540,7 @@
         // immediately and is refreshed in the background. All storage
         // access degrades silently when localStorage is unavailable.
 
-        const CACHE_PREFIX = 'inspire-citation-cache-v2:'; // v2: imprecise dates spread, not piled on Jan 1
+        const CACHE_PREFIX = 'inspire-citation-cache-v3:'; // v3: issue dates (Jan 1 / 1st of month) treated as reduced precision
         const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
         const CACHE_MAX_ENTRIES = 50;
 
@@ -861,9 +861,20 @@
             const groups = new Map();
             for (let i = 0; i < citations.length; i++) {
                 const d = citations[i].date || "";
+                // Publisher issue dates masquerade as full precision:
+                // Jan 1 (annual volumes) is really year precision, and the
+                // 1st of other months is really month precision
+                let key = null;
                 if (/^\d{4}$/.test(d) || /^\d{4}-\d{2}$/.test(d)) {
-                    if (!groups.has(d)) groups.set(d, []);
-                    groups.get(d).push(i);
+                    key = d;
+                } else if (/^\d{4}-01-01$/.test(d)) {
+                    key = d.substring(0, 4);
+                } else if (/^\d{4}-\d{2}-01$/.test(d)) {
+                    key = d.substring(0, 7);
+                }
+                if (key !== null) {
+                    if (!groups.has(key)) groups.set(key, []);
+                    groups.get(key).push(i);
                 }
             }
             groups.forEach((idxs, key) => {

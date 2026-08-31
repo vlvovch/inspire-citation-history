@@ -67,7 +67,7 @@ The application is built as a single HTML file with embedded JavaScript that:
 
 **Note on Performance**: Citation records are retrieved 500 at a time, requesting only the citation dates (`fields=earliest_date`), which keeps responses small and loading fast even for highly cited papers. All API calls share a rate limiter that stays below INSPIRE's limit of 15 requests per 5-second window, and requests are automatically retried with exponential backoff on rate-limit (429) or server errors, so loading many papers at once should slow down gracefully rather than halt. Fetched citation data is additionally cached in the browser's localStorage for 24 hours: recently viewed papers and shared links render instantly, and stale entries are refreshed in the background.
 
-**Note on citation dates**: Citing records with only year- or month-level date precision (common for conference proceedings and theses) are spread evenly across their year or month instead of being piled on January 1, which would otherwise produce phantom spikes in the citation rate.
+**Note on citation dates**: Citing records with only year- or month-level date precision (common for conference proceedings and theses) are spread evenly across their year or month instead of being piled on January 1, which would otherwise produce phantom spikes in the citation rate. Dates of exactly January 1 are treated as year precision and dates on the 1st of other months as month precision, since these usually reflect journal issue dating rather than actual appearance dates.
 
 ### Testing
 
