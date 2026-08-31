@@ -1,8 +1,10 @@
-// DOM smoke test: loads the app in headless Chromium with the CDN chart
-// libraries replaced by stubs and synthetic citation data injected, then
-// checks view switching, dataset construction, URL handling, and the
-// identifier parser. Skips cleanly when no Chromium/Chrome is available
-// (set CHROME_BIN to point at one explicitly).
+// DOM smoke test: loads the app in headless Chromium with the real
+// chart.xkcd library (vendored copy of the pinned CDN build, so no network
+// is needed) and synthetic citation data injected, then checks view
+// switching, dataset construction, the decorated SVG (bands, dashes,
+// labels, tooltip, legend pruning), URL handling, and the identifier
+// parser. Skips cleanly when no Chromium/Chrome is available (set
+// CHROME_BIN to point at one explicitly).
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -33,33 +35,25 @@ if (!chrome) {
 
 let html = fs.readFileSync(path.join(__dirname, '..', 'inspire-citation-history.html'), 'utf8');
 
-const stubs = `<script>
-window.Chart = class {
-    constructor(canvas, config) {
-        this.canvas = canvas; this.config = config;
-        (window.__chartConfigs = window.__chartConfigs || []).push(config);
-    }
-    destroy() { this.destroyed = true; (window.__chartDestroys = (window.__chartDestroys || 0) + 1); }
-};
-Chart.defaults = { font: {} };
-window.chartXkcd = {
-    XY: class { constructor(el, cfg) {
+// Swap the CDN chart.xkcd for the vendored copy (same 1.1.13 build) plus a
+// wrapper that records every config passed to the XY chart; drop the
+// Font Awesome stylesheet (icons only)
+const localLib = `<script src="chart.xkcd.min.js"></script>
+<script>
+(function () {
+    var RealXY = chartXkcd.XY;
+    chartXkcd.XY = function (el, cfg) {
         (window.__xkcdConfigs = window.__xkcdConfigs || []).push(cfg);
-        // mimic the real library: it sizes the svg itself to parent width x 2/3
-        var pw = el.parentElement.clientWidth;
-        el.setAttribute('width', pw);
-        el.setAttribute('height', Math.min(pw * 2 / 3, window.innerHeight));
-        el.appendChild(document.createElementNS('http://www.w3.org/2000/svg', 'g'));
-    } },
-    Line: class {},
-    config: { positionType: { upLeft: 1 } }
-};
+        return new RealXY(el, cfg);
+    };
+})();
 </` + `script>`;
-
-// Replace the three CDN chart script tags with the stubs (first one), drop the rest + the FA stylesheet
-html = html.replace(/<script src="https:\/\/cdn\.jsdelivr\.net\/npm\/chart\.js"><\/script>/, stubs);
-html = html.replace(/\s*<script src="https:\/\/cdn\.jsdelivr\.net\/npm\/chartjs-adapter-date-fns@3"><\/script>/, '');
-html = html.replace(/\s*<script src="https:\/\/cdn\.jsdelivr\.net\/npm\/chart\.xkcd@1\.1\.13\/dist\/chart\.xkcd\.min\.js"><\/script>/, '');
+const cdnTag = /<script src="https:\/\/cdn\.jsdelivr\.net\/npm\/chart\.xkcd@1\.1\.13\/dist\/chart\.xkcd\.min\.js"><\/script>/;
+if (!cdnTag.test(html)) {
+    console.error('FAIL: pinned chart.xkcd CDN tag not found in the page');
+    process.exit(1);
+}
+html = html.replace(cdnTag, localLib);
 html = html.replace(/\s*<link rel="stylesheet" href="https:\/\/cdnjs\.cloudflare\.com[^>]*>/, '');
 
 const harness = `<script>
@@ -79,52 +73,103 @@ document.addEventListener('DOMContentLoaded', () => {
             citation_dates: mk('2019-02-01', 300, 6.5 * 365 * 24 * 3600e3) } };
         recidData['222'] = { citation_record: { refname: 'Paper B, PRC 2, 2 (2023)', date: '2023-03-01',
             citation_dates: mk('2023-03-01', 120, 3.4 * 365 * 24 * 3600e3) } };
+        const nCfg = () => (window.__xkcdConfigs || []).length;
+        const lastCfg = () => window.__xkcdConfigs[window.__xkcdConfigs.length - 1];
+        const chartSvg = () => document.getElementById('chart');
+        // Legend rows are swatch+text pairs sharing one layer; tooltip items
+        // (chart.xkcd's own and the rate view's) match the same pattern but
+        // sit one per nested svg, so require >= 2 texts in the parent
+        const legendRows = () => Array.from(chartSvg().querySelectorAll('text')).filter(t =>
+            t.previousElementSibling && t.previousElementSibling.tagName === 'rect' &&
+            parseFloat(t.previousElementSibling.getAttribute('width')) < 25 &&
+            !t.closest('.rate-tooltip') &&
+            t.parentNode.querySelectorAll('text').length >= 2);
 
         document.getElementById('show-rate').checked = false;
         updateChart();
-        smokeLog('cumulative view renders via chartXkcd', (window.__xkcdConfigs || []).length === 1);
-        var svgEl = document.getElementById('chart');
+        smokeLog('cumulative view renders via chartXkcd', nCfg() === 1, 'got ' + nCfg());
+        var svgEl = chartSvg();
         var svgW = parseInt(svgEl.getAttribute('width'), 10);
         var svgH = parseInt(svgEl.getAttribute('height'), 10);
         var box = svgEl.parentElement.getBoundingClientRect();
-        smokeLog('container uses chart.xkcd\u2019s native 3:2 aspect',
+        smokeLog('container uses chart.xkcd\\u2019s native 3:2 aspect',
             box.width > 0 && Math.abs(box.width / box.height - 1.5) < 0.05,
             Math.round(box.width) + 'x' + Math.round(box.height));
         smokeLog('cumulative svg fits the container (no clipping)',
             svgW > 0 && svgH > 0 && Math.abs(svgW / svgH - 1.5) < 0.05 && svgH <= box.height + 2,
             svgW + 'x' + svgH + ' in ' + Math.round(box.height));
-        smokeLog('cumulative: svg shown, canvas hidden',
-            document.getElementById('chart').style.display !== 'none' &&
-            document.getElementById('rate-chart').style.display === 'none');
+        smokeLog('cumulative renders real xkcd line paths',
+            svgEl.querySelectorAll('path.xkcd-chart-xyline').length === 2,
+            'paths=' + svgEl.querySelectorAll('path.xkcd-chart-xyline').length);
+        smokeLog('cumulative legend lists both papers', legendRows().length === 2,
+            'rows=' + legendRows().length);
 
+        // Rate view (smooth estimator by default)
         document.getElementById('show-rate').checked = true;
         updateChart();
-        const cfgs = window.__chartConfigs || [];
-        smokeLog('rate view builds one Chart.js config', cfgs.length === 1, 'got ' + cfgs.length);
-        if (cfgs.length) {
-            const cfg = cfgs[0];
-            const ds = cfg.data.datasets;
-            smokeLog('3 datasets per paper (2 papers -> 6)', ds.length === 6, 'got ' + ds.length);
-            smokeLog('smooth is the default: no steps, no markers, dense grid',
-                ds[0].stepped === false && ds[0].pointRadius === 0 && ds[0].data.length >= 120,
-                'stepped=' + ds[0].stepped + ' r=' + ds[0].pointRadius + ' pts=' + ds[0].data.length);
-            smokeLog('band pairing hi/lo with fill -1',
-                ds[1].label.startsWith('__band_hi') && ds[2].label.startsWith('__band_lo') && ds[2].fill === '-1');
-            smokeLog('x scale is time axis in date mode', cfg.options.scales.x.type === 'time');
-            const pts = ds[0].data;
-            smokeLog('central points carry n/lo/hi with lo<=y<=hi',
-                pts.every(p => typeof p.n === 'number' && p.lo <= p.y + 1e-9 && p.y <= p.hi + 1e-9));
-            const lf = cfg.options.plugins.legend.labels.filter;
-            smokeLog('legend filter hides band labels', lf({ text: '__band_hi_1' }) === false && lf({ text: 'Paper A' }) === true);
-            const lbl = cfg.options.plugins.tooltip.callbacks.label({ raw: pts[0], dataset: ds[0] });
-            smokeLog('smooth tooltip is terse value +- error', typeof lbl === 'string' && (lbl.indexOf('±') >= 0 || lbl.indexOf('+') >= 0) && !isNaN(parseFloat(lbl)) && lbl.indexOf('citations') < 0 && lbl.indexOf('n_eff') < 0, lbl);
-            smokeLog('per-chart annotation plugin registered', Array.isArray(cfg.plugins) && cfg.plugins[0] && cfg.plugins[0].id === 'presentRateLabel');
-            smokeLog('right margin reserved for labels', cfg.options.layout && cfg.options.layout.padding && cfg.options.layout.padding.right === 110);
-            smokeLog('rate view fills the shared container', cfg.options.maintainAspectRatio === false);
+        smokeLog('rate view renders via chartXkcd too', nCfg() === 2, 'got ' + nCfg());
+        var cfg = lastCfg();
+        smokeLog('rate config carries the xkcd styling of the cumulative view',
+            cfg.title === 'Citation Rate' && cfg.yLabel === 'Citations per year' &&
+            cfg.options.dotSize === 0.5 && cfg.options.showLine === true &&
+            cfg.options.timeFormat === 'MMM D, YYYY',
+            JSON.stringify({ t: cfg.title, y: cfg.yLabel }));
+        var ds = cfg.data.datasets;
+        smokeLog('papers first, then helper datasets, then the pad point',
+            ds.length === 9 && ds[0].label.indexOf('Paper A') === 0 && ds[1].label.indexOf('Paper B') === 0 &&
+            ds[ds.length - 1].label === '' && ds[ds.length - 1].data.length === 1,
+            ds.map(function (d) { return d.label; }).join(' | '));
+        smokeLog('per-dataset colors aligned', cfg.options.dataColors.length === ds.length);
+        smokeLog('smooth central curve is dense', ds[0].data.length >= 80, 'pts=' + ds[0].data.length);
+        var svgR = chartSvg();
+        svgW = parseInt(svgR.getAttribute('width'), 10);
+        svgH = parseInt(svgR.getAttribute('height'), 10);
+        box = svgR.parentElement.getBoundingClientRect();
+        smokeLog('rate svg has the same size and aspect as cumulative',
+            svgW > 0 && Math.abs(svgW / svgH - 1.5) < 0.05 && svgH <= box.height + 2,
+            svgW + 'x' + svgH);
+        smokeLog('one rendered path per dataset',
+            svgR.querySelectorAll('path.xkcd-chart-xyline').length === ds.length);
+        smokeLog('68% bands drawn as filled polygons under the curves',
+            svgR.querySelectorAll('path.rate-band-fill').length === 2,
+            'fills=' + svgR.querySelectorAll('path.rate-band-fill').length);
+        var hiddenPaths = Array.from(svgR.querySelectorAll('path.xkcd-chart-xyline'))
+            .filter(function (p) { return p.getAttribute('display') === 'none'; });
+        smokeLog('band edges and pad point hidden (5 paths)', hiddenPaths.length === 5,
+            'hidden=' + hiddenPaths.length);
+        var dashed = Array.from(svgR.querySelectorAll('path.xkcd-chart-xyline'))
+            .filter(function (p) { return p.getAttribute('stroke-dasharray'); });
+        smokeLog('provisional tails dashed', dashed.length === 2, 'dashed=' + dashed.length);
+        var nowLabels = Array.from(svgR.querySelectorAll('text.rate-now-label'));
+        smokeLog('present-rate labels beside the curves, value \\u00b1 error',
+            nowLabels.length === 2 && nowLabels.every(function (t) { return t.textContent.indexOf('\\u00b1') > 0; }),
+            nowLabels.map(function (t) { return t.textContent; }).join(' | '));
+        smokeLog('rate legend pruned to the two papers', legendRows().length === 2 &&
+            legendRows().every(function (t) { return t.textContent.indexOf('Paper') === 0; }),
+            legendRows().map(function (t) { return t.textContent; }).join(' | '));
+        smokeLog('no helper labels left anywhere in the svg',
+            Array.from(svgR.querySelectorAll('text')).every(function (t) {
+                return ['upper 68%', 'lower 68%', 'now (provisional)', 'model fit'].indexOf(t.textContent) < 0;
+            }));
+
+        // Tooltip: hover a dot on the first paper's curve
+        var tipEl = svgR.querySelector('svg.rate-tooltip');
+        smokeLog('rate tooltip exists and starts hidden',
+            !!tipEl && tipEl.style.visibility === 'hidden');
+        var dot = svgR.querySelector('g[xy-group-index="0"] circle');
+        if (dot) {
+            dot.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+            var tipTexts = tipEl ? Array.from(tipEl.querySelectorAll('text')).map(function (t) { return t.textContent; }) : [];
+            smokeLog('hovering a dot shows the terse \\u00b1 tooltip',
+                !!tipEl && tipEl.style.visibility === 'visible' &&
+                tipTexts.some(function (t) { return t.indexOf('Paper A') === 0 && (t.indexOf('\\u00b1') > 0 || t.indexOf('+') > 0); }),
+                tipTexts.join(' | '));
+            dot.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }));
+            smokeLog('tooltip hides on mouseout', tipEl.style.visibility === 'hidden');
+        } else {
+            smokeLog('hover dot found for tooltip test', false);
         }
-        smokeLog('rate: canvas shown, svg hidden',
-            document.getElementById('rate-chart').style.display === 'block' &&
-            document.getElementById('chart').style.display === 'none');
+
         smokeLog('estimator + width selectors shown in rate view',
             document.getElementById('estimator-group').style.display === 'flex' &&
             document.getElementById('bin-width-group').style.display === 'flex');
@@ -135,29 +180,29 @@ document.addEventListener('DOMContentLoaded', () => {
 
         document.getElementById('align-timeline').checked = true;
         updateChart();
-        const cfgA = window.__chartConfigs[window.__chartConfigs.length - 1];
-        smokeLog('aligned rate uses linear axis', cfgA.options.scales.x.type === 'linear');
-        smokeLog('aligned axis in years (Mode 2 via >5y paper)',
-            cfgA.options.scales.x.title.text === 'Years since publication', cfgA.options.scales.x.title.text);
+        var cfgA = lastCfg();
+        smokeLog('aligned rate switches to a linear axis in years (Mode 2 via >5y paper)',
+            cfgA.options.timeFormat === '' && cfgA.xLabel === 'Timeline (Years)', cfgA.xLabel);
         document.getElementById('align-timeline').checked = false;
 
-        // Binned mode
+        // Binned mode: soft-step corners
         document.getElementById('rate-estimator').value = 'binned';
         updateChart();
-        const cfgS = window.__chartConfigs[window.__chartConfigs.length - 1];
-        smokeLog('binned mode: stepped with markers',
-            cfgS.data.datasets[0].stepped === 'middle' && cfgS.data.datasets[0].pointRadius === 2.5);
+        var cfgS = lastCfg();
+        var mainLen = cfgS.data.datasets[0].data.length;
+        var tailLenB = cfgS.data.datasets.filter(function (d) { return d.label === 'now (provisional)'; })[0].data.length;
+        smokeLog('binned curve drawn as corner pairs (soft steps)',
+            mainLen + tailLenB - 1 === 2 * rateData[0].points.length,
+            mainLen + '+' + tailLenB + '-1 vs 2x' + rateData[0].points.length);
+        smokeLog('binned points carry per-bin width w',
+            rateData[0].points.every(function (p) { return typeof p.w === 'number' && p.w > 0; }));
         smokeLog('width label reads Bin width in binned mode',
             document.getElementById('bin-width-label').textContent === 'Bin width:');
-        const lblB = cfgS.options.plugins.tooltip.callbacks.label({ raw: cfgS.data.datasets[0].data[0], dataset: cfgS.data.datasets[0] });
-        smokeLog('binned tooltip is terse value +- error', (lblB.indexOf('±') >= 0 || lblB.indexOf('+') >= 0) && !isNaN(parseFloat(lblB)) && lblB.indexOf('citations') < 0, lblB);
 
         document.getElementById('bin-width').value = '12';
         updateChart();
-        const cfgB = window.__chartConfigs[window.__chartConfigs.length - 1];
-        const nBins = cfgB.data.datasets[0].data.length;
+        var nBins = rateData[0].points.length;
         smokeLog('yearly bin override: paper A has 7-8 bins', nBins >= 7 && nBins <= 8, 'got ' + nBins);
-        smokeLog('old rate charts destroyed on rebuild', (window.__chartDestroys || 0) >= 3, 'destroys=' + window.__chartDestroys);
 
         updateUrl();
         smokeLog('url carries rate=true & bin=12 & est=binned',
@@ -167,27 +212,23 @@ document.addEventListener('DOMContentLoaded', () => {
         // Bayesian blocks mode
         document.getElementById('rate-estimator').value = 'blocks';
         updateChart();
-        const cfgK = window.__chartConfigs[window.__chartConfigs.length - 1];
-        const dsK = cfgK.data.datasets[0];
-        smokeLog('blocks: 3 datasets per paper', cfgK.data.datasets.length === 6, 'got ' + cfgK.data.datasets.length);
-        smokeLog('blocks: rectangles without steps/markers', dsK.stepped === false && dsK.pointRadius === 0);
-        smokeLog('blocks: dup points mirror block rates', dsK.data.length >= 2 &&
-            dsK.data.every(function (pt, i, a) { return !pt.dup || pt.y === a[i - 1].y; }));
-        var nBlocksK = dsK.data.filter(function (pt) { return !pt.dup; }).length;
+        var ptsK = rateData[0].points;
+        smokeLog('blocks: dup points mirror block rates', ptsK.length >= 2 &&
+            ptsK.every(function (pt, i, a) { return !pt.dup || pt.y === a[i - 1].y; }));
+        var nBlocksK = ptsK.filter(function (pt) { return !pt.dup; }).length;
         smokeLog('blocks: few blocks for featureless data', nBlocksK >= 1 && nBlocksK <= 4, 'blocks=' + nBlocksK);
         smokeLog('blocks: width selector hidden', document.getElementById('bin-width-group').style.display === 'none');
         smokeLog('blocks: sensitivity selector shown', document.getElementById('p0-group').style.display === 'flex');
-        smokeLog('blocks: rounded-corner interpolation', dsK.cubicInterpolationMode === 'monotone');
-        smokeLog('blocks: ramped x strictly increasing', dsK.data.every(function (pt, i, a) { return i === 0 || pt.x > a[i - 1].x; }));
+        smokeLog('blocks: ramped x strictly increasing', ptsK.every(function (pt, i, a) { return i === 0 || pt.x > a[i - 1].x; }));
         smokeLog('blocks: rateData estimator label', rateData[0].estimator === 'blocks');
         updateUrl();
         smokeLog('url carries est=blocks', location.search.indexOf('est=blocks') >= 0, location.search);
 
-        var cfgCountBefore = window.__chartConfigs.length;
+        var cfgCountBefore = nCfg();
         document.getElementById('blocks-p0').value = '0.9';
         document.getElementById('blocks-p0').dispatchEvent(new Event('change'));
         smokeLog('sensitivity change event triggers a redraw',
-            window.__chartConfigs.length === cfgCountBefore + 1, 'configs ' + cfgCountBefore + ' -> ' + window.__chartConfigs.length);
+            nCfg() === cfgCountBefore + 1, 'configs ' + cfgCountBefore + ' -> ' + nCfg());
         smokeLog('url carries p0=0.9 when eager', location.search.indexOf('p0=0.9') >= 0, location.search);
         document.getElementById('blocks-p0').value = '0.05';
         document.getElementById('blocks-p0').dispatchEvent(new Event('change'));
@@ -196,17 +237,16 @@ document.addEventListener('DOMContentLoaded', () => {
         // Every rate control must redraw through its real change event
         var controlIds = ['rate-estimator', 'bin-width', 'blocks-p0', 'wsb-fit'];
         var allWired = controlIds.every(function (id) {
-            var before = window.__chartConfigs.length;
+            var before = nCfg();
             document.getElementById(id).dispatchEvent(new Event('change'));
-            return window.__chartConfigs.length === before + 1;
+            return nCfg() === before + 1;
         });
         smokeLog('all rate controls have live change listeners', allWired);
 
         document.getElementById('rate-estimator').value = 'smooth';
         updateChart();
-        const cfgT = window.__chartConfigs[window.__chartConfigs.length - 1];
         smokeLog('smooth mode honors width override as FWHM=12',
-            cfgT.data.datasets[0].data.length >= 120 && rateData[0].widthMonths === 12,
+            lastCfg().data.datasets[0].data.length >= 80 && rateData[0].widthMonths === 12,
             'width=' + rateData[0].widthMonths);
         updateUrl();
         smokeLog('est param removed when back to default', location.search.indexOf('est=') < 0, location.search);
@@ -218,20 +258,16 @@ document.addEventListener('DOMContentLoaded', () => {
             !document.getElementById('wsb-fit').checked);
         document.getElementById('wsb-fit').checked = true;
         document.getElementById('wsb-fit').dispatchEvent(new Event('change'));
-        var cfgW = window.__chartConfigs[window.__chartConfigs.length - 1];
-        var wsbDs = cfgW.data.datasets.filter(function (d) { return d.label.indexOf('__wsb_') === 0; });
+        var cfgW = lastCfg();
+        var wsbDs = cfgW.data.datasets.filter(function (d) { return d.label === 'model fit'; });
         smokeLog('wsb overlay only for the mature paper', wsbDs.length === 1, 'got ' + wsbDs.length);
-        smokeLog('wsb overlay dashed without markers', wsbDs.length === 1 &&
-            Array.isArray(wsbDs[0].borderDash) && wsbDs[0].pointRadius === 0);
-        var centrals = cfgW.data.datasets.filter(function (d) { return d.label && d.label.indexOf('__') !== 0; });
-        smokeLog('wsb summary attached: ok for mature, refused for young',
-            centrals.length === 2 && centrals[0].wsbSummary && centrals[0].wsbSummary.ok === true &&
-            centrals[1].wsbSummary && centrals[1].wsbSummary.ok === false,
-            JSON.stringify(centrals.map(function (d) { return d.wsbSummary && d.wsbSummary.ok; })));
-        smokeLog('wsb fit carries an explicit reliability verdict',
-            typeof centrals[0].wsbSummary.reliable === 'boolean' && isFinite(centrals[0].wsbSummary.cinf),
-            'reliable=' + centrals[0].wsbSummary.reliable + ' cinf=' + (centrals[0].wsbSummary.cinf || 0).toFixed(0));
-        smokeLog('all datasets carry groupKey', cfgW.data.datasets.every(function (d) { return d.groupKey !== undefined; }));
+        var svgW2 = chartSvg();
+        var wsbDashed = Array.from(svgW2.querySelectorAll('path.xkcd-chart-xyline'))
+            .filter(function (p) { return p.getAttribute('stroke-dasharray') === '10,6'; });
+        smokeLog('wsb curve dashed distinctly from the tails', wsbDashed.length === 1,
+            'got ' + wsbDashed.length);
+        smokeLog('wsb legend row pruned too', legendRows().length === 2,
+            legendRows().map(function (t) { return t.textContent; }).join(' | '));
         updateUrl();
         smokeLog('url carries wsb=true', location.search.indexOf('wsb=true') >= 0, location.search);
         var summaryEl = document.getElementById('fit-summary');
@@ -243,20 +279,20 @@ document.addEventListener('DOMContentLoaded', () => {
             summaryEl.textContent);
         document.getElementById('wsb-fit').checked = false;
         document.getElementById('wsb-fit').dispatchEvent(new Event('change'));
-        var cfgW2 = window.__chartConfigs[window.__chartConfigs.length - 1];
         smokeLog('wsb overlay removed when unchecked',
-            cfgW2.data.datasets.filter(function (d) { return d.label.indexOf('__wsb_') === 0; }).length === 0 &&
-            location.search.indexOf('wsb=') < 0, location.search);
+            lastCfg().data.datasets.filter(function (d) { return d.label === 'model fit'; }).length === 0);
+        updateUrl();
+        smokeLog('wsb param dropped when unchecked', location.search.indexOf('wsb=') < 0, location.search);
         smokeLog('fit summary hidden when unchecked', document.getElementById('fit-summary').style.display === 'none');
 
+        // Back to the cumulative view, with the model overlay
         document.getElementById('show-rate').checked = false;
         updateChart();
-        smokeLog('switch back to cumulative renders again', (window.__xkcdConfigs || []).length === 2);
-
-        // WSB overlay on the cumulative view
+        smokeLog('switch back to cumulative renders again',
+            lastCfg().title === 'Citation History', lastCfg().title);
         document.getElementById('wsb-fit').checked = true;
         document.getElementById('wsb-fit').dispatchEvent(new Event('change'));
-        var cfgCum = window.__xkcdConfigs[window.__xkcdConfigs.length - 1];
+        var cfgCum = lastCfg();
         var fitLabels = cfgCum.data.datasets.filter(function (d) { return d.label.indexOf('fit') === 0 || d.label.indexOf('projected total') === 0; });
         smokeLog('cumulative view gains one model curve (mature paper only)',
             cfgCum.data.datasets.length === 3 && fitLabels.length === 1,
@@ -264,38 +300,18 @@ document.addEventListener('DOMContentLoaded', () => {
         smokeLog('cumulative model colors extended to match',
             cfgCum.options.dataColors.length === 3 &&
             String(cfgCum.options.dataColors[2]).indexOf('rgba') === 0);
-        smokeLog('wsb checkbox visible in cumulative view', document.getElementById('wsb-group').style.display === 'flex');
+        smokeLog('cumulative legend prunes the fit row (papers only)',
+            legendRows().length === 2 &&
+            Array.from(chartSvg().querySelectorAll('text')).every(function (t) {
+                return t.textContent.indexOf('projected total') < 0 && t.textContent.indexOf('fit (') !== 0;
+            }),
+            legendRows().map(function (t) { return t.textContent; }).join(' | '));
         smokeLog('fit summary visible in cumulative view',
             document.getElementById('fit-summary').style.display === 'block' &&
             document.getElementById('fit-summary').querySelectorAll('.fit-summary-item').length === 2,
             document.getElementById('fit-summary').textContent);
         updateUrl();
         smokeLog('wsb param kept in cumulative view', location.search.indexOf('wsb=true') >= 0, location.search);
-        // Legend pruning on a synthetic chart.xkcd-style legend
-        var NS = 'http://www.w3.org/2000/svg';
-        var fakeSvg = document.createElementNS(NS, 'svg');
-        var legendG = document.createElementNS(NS, 'g');
-        var legendBg = document.createElementNS(NS, 'rect');
-        legendBg.setAttribute('width', '200'); legendBg.setAttribute('height', '64'); legendBg.setAttribute('y', '0');
-        legendG.appendChild(legendBg);
-        function legendRow(y, label) {
-            var r = document.createElementNS(NS, 'rect');
-            r.setAttribute('width', '8'); r.setAttribute('height', '8'); r.setAttribute('y', String(y));
-            legendG.appendChild(r);
-            var t = document.createElementNS(NS, 'text');
-            t.setAttribute('y', String(y + 10)); t.textContent = label;
-            legendG.appendChild(t);
-        }
-        legendRow(10, 'Paper A'); legendRow(30, 'projected total (1.6 \u00b1 0.3)k');
-        fakeSvg.appendChild(legendG);
-        pruneFitLegendRows(fakeSvg, ['projected total (1.6 \u00b1 0.3)k']);
-        smokeLog('legend pruning removes fit rows and shrinks the box',
-            fakeSvg.querySelectorAll('text').length === 1 &&
-            fakeSvg.querySelectorAll('rect').length === 2 &&
-            parseFloat(legendBg.getAttribute('height')) === 44,
-            'texts=' + fakeSvg.querySelectorAll('text').length + ' rects=' + fakeSvg.querySelectorAll('rect').length +
-            ' bg=' + legendBg.getAttribute('height'));
-
         document.getElementById('wsb-fit').checked = false;
         document.getElementById('wsb-fit').dispatchEvent(new Event('change'));
         updateUrl();
@@ -359,10 +375,13 @@ html = html.replace('</body>', harness + '\n</body>');
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ich-smoke-'));
 const smokePath = path.join(tmpDir, 'smoke.html');
 fs.writeFileSync(smokePath, html);
+fs.copyFileSync(path.join(__dirname, 'vendor', 'chart.xkcd.min.js'),
+    path.join(tmpDir, 'chart.xkcd.min.js'));
 
 const dom = execFileSync(chrome, [
-    '--headless=new', '--disable-gpu', '--no-sandbox',
-    '--virtual-time-budget=8000', '--dump-dom', 'file://' + smokePath
+    '--headless=new', '--disable-gpu', '--no-sandbox', '--window-size=1280,800',
+    '--allow-file-access-from-files',
+    '--virtual-time-budget=15000', '--dump-dom', 'file://' + smokePath
 ], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] });
 
 // The harness source inside <script> also contains the marker strings, so

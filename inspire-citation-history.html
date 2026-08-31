@@ -7,9 +7,6 @@
         content="width=device-width, initial-scale=1.0"
     />
     <title>INSPIRE Citation History</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <!-- Add the adapter for date-fns -->
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.xkcd@1.1.13/dist/chart.xkcd.min.js"></script>
     <!-- Add Font Awesome for icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
@@ -266,7 +263,6 @@
         
         <div class="chart-container">
             <svg id="chart" style="width: 100%; height: 100%; display: block;"></svg>
-            <canvas id="rate-chart" style="display: none;"></canvas>
         </div>
 
         <div class="fit-summary" id="fit-summary" style="display: none;"></div>
@@ -322,11 +318,10 @@
         ];
         
         let recidData = {};   // recid -> { dates: [array of date strings] }
-        let chart = null;     // The single Chart.js instance
+        let chart = null;     // The chart.xkcd instance (either view)
         let chartData = null; // Global variable to store chart data for export
         let debugInfo = [];   // For debug logs
         let isLoading = false; // Flag to track loading state
-        let rateChart = null; // Chart.js instance for the citation-rate view
         let rateData = null;  // Binned rate series per record, for CSV export
         const wsbCache = new Map(); // Memoized WSB fits per (recid, N, span)
         
@@ -1267,6 +1262,7 @@
                     lo: 12 * interval[0] / width,
                     hi: 12 * interval[1] / width,
                     n: n,
+                    w: Math.round(width * 100) / 100, // last bin can be wider (sliver fold)
                     partial: k === nBins - 1 // current bin: still filling + indexing lag
                 });
             }
@@ -1780,6 +1776,56 @@
             return `rgba(${r}, ${g}, ${b}, ${alpha})`;
         }
 
+        // Corner-pair representation of the binned estimate for plotting:
+        // each bin becomes two points at its edges, inset slightly so the
+        // monotone interpolation draws softly rounded steps (same idea as
+        // the Bayesian-blocks view). trueX keeps the bin center for
+        // tooltips; the CSV export uses the original center points.
+        function binnedToCorners(points, Mode) {
+            const toX = (p, dMonths) => Mode === 0 ?
+                new Date(p.x.getTime() + dMonths * MS_PER_MONTH) :
+                (Mode === 2 ? p.x + dMonths / 12 : p.x + dMonths);
+            const corners = [];
+            const nPts = points.length;
+            points.forEach((p, k) => {
+                const w = p.w !== undefined ? p.w : 0;
+                const half = w / 2;
+                const ramp = Math.min(1.5, Math.max(0.25, 0.15 * w));
+                const insetL = k === 0 ? 0 : Math.min(ramp, 0.45 * w);
+                const insetR = k === nPts - 1 ? 0 : Math.min(ramp, 0.45 * w);
+                const common = { y: p.y, lo: p.lo, hi: p.hi, n: p.n, w: p.w,
+                    partial: p.partial, trueX: p.x };
+                corners.push(Object.assign({ x: toX(p, -half + insetL) }, common));
+                corners.push(Object.assign({ x: toX(p, half - insetR), dup: true }, common));
+            });
+            return corners;
+        }
+
+        // Text lines for the label next to a curve's latest point:
+        // "value ± error", plus the projected total for a reliable model fit
+        function presentRateLines(point, fit) {
+            const err = (point.hi - point.lo) / 2;
+            const dec = point.y < 10 ? 1 : 0;
+            const lines = [point.y.toFixed(dec) + ' ± ' + err.toFixed(dec)];
+            if (fit && fit.ok && fit.reliable) {
+                lines.push('total ' + formatCountWithError(fit.cinf, (fit.hi - fit.lo) / 2) +
+                    (fit.unstable ? '?' : ''));
+            }
+            return lines;
+        }
+
+        // Terse tooltip value: "12.3 ± 1.5", split into +up -down only when
+        // the interval is clearly asymmetric
+        function rateTooltipText(p) {
+            const up = p.hi - p.y;
+            const dn = p.y - p.lo;
+            if (!(up > 0 || dn > 0)) return p.y.toFixed(1);
+            if (Math.abs(up - dn) < 0.15 * Math.max(up, dn)) {
+                return p.y.toFixed(1) + ' ± ' + ((up + dn) / 2).toFixed(1);
+            }
+            return p.y.toFixed(1) + ' +' + up.toFixed(1) + ' -' + dn.toFixed(1);
+        }
+
         // One line per paper under the chart stating the model-fit outcome in
         // words (projection with uncertainty, or why none is given)
         function renderFitSummary(entries) {
@@ -1795,50 +1841,51 @@
             el.style.display = 'block';
         }
 
-        // chart.xkcd has no option to exclude datasets from its legend, so the
-        // model-fit rows are removed after rendering. Fit datasets are always
-        // appended last, so the surviving rows keep their positions and only
-        // the legend background needs shrinking. Fails silently if the legend
-        // structure is not as expected.
+        // chart.xkcd has no option to exclude datasets from its legend, so
+        // helper rows are removed after rendering. The legend is a nested
+        // <svg> holding a background layer (one rect) and a text layer with,
+        // per dataset, an 8x8 swatch rect immediately followed by its
+        // <text>, rows 20px apart. Surviving rows are re-packed and the
+        // background box resized. Fails silently if the structure is not as
+        // expected.
         function pruneFitLegendRows(svgEl, labels) {
             try {
                 if (!labels.length) return;
-                const texts = Array.from(svgEl.querySelectorAll('text'));
-                const doomed = texts.filter(t => labels.includes(t.textContent));
-                if (doomed.length === 0) return;
-                // chart.xkcd appends the legend as: background rect, then per
-                // dataset a small swatch rect immediately followed by its text.
-                // Rely on that DOM order instead of pixel geometry.
                 const isSwatch = el => el && el.tagName === 'rect' &&
                     parseFloat(el.getAttribute('width')) < 25;
-                const legendTexts = texts.filter(t => isSwatch(t.previousElementSibling));
-                let rowH = 20;
-                if (legendTexts.length >= 2) {
-                    const ys = legendTexts.map(t => parseFloat(t.getAttribute('y'))).sort((a, b) => a - b);
-                    rowH = (ys[1] - ys[0]) || 20;
-                }
-                // The legend background is the last big rect before the first swatch
-                let bg = null;
-                if (legendTexts.length > 0) {
-                    let node = legendTexts[0].previousElementSibling; // first swatch
-                    while (node) {
-                        if (node.tagName === 'rect' && parseFloat(node.getAttribute('width')) > 80) {
-                            bg = node;
-                            break;
-                        }
-                        node = node.previousElementSibling;
-                    }
-                }
+                // The swatch+text pattern also matches chart.xkcd's (hidden)
+                // tooltip items, so locate the legend layer from a row that
+                // actually matches one of the doomed labels
+                const texts = Array.from(svgEl.querySelectorAll('text'));
+                const rows = texts.filter(t => isSwatch(t.previousElementSibling));
+                if (rows.length === 0) return;
+                let textLayer = null;
                 let removed = 0;
-                doomed.forEach(t => {
-                    if (!isSwatch(t.previousElementSibling)) return; // not a legend row
+                rows.forEach(t => {
+                    if (!labels.includes(t.textContent)) return;
+                    textLayer = t.parentNode;
                     t.previousElementSibling.remove();
                     t.remove();
                     removed++;
                 });
-                if (bg && removed > 0) {
+                if (removed === 0 || !textLayer) return;
+                // Re-pack the surviving rows (chart.xkcd puts row i at y = 17 + 20i)
+                Array.from(textLayer.querySelectorAll('text')).forEach((t, j) => {
+                    if (isSwatch(t.previousElementSibling)) {
+                        t.previousElementSibling.setAttribute('y', String(17 + 20 * j));
+                    }
+                    t.setAttribute('y', String(17 + 20 * j + 8));
+                });
+                // Shrink the background box, kept in a sibling layer
+                const bgLayer = textLayer.previousElementSibling;
+                const bg = bgLayer && bgLayer.querySelector ? bgLayer.querySelector('rect') : null;
+                if (bg) {
                     bg.setAttribute('height',
-                        Math.max(rowH, parseFloat(bg.getAttribute('height')) - rowH * removed));
+                        Math.max(20, parseFloat(bg.getAttribute('height')) - 20 * removed));
+                    if (typeof textLayer.getBBox === 'function') {
+                        const w = textLayer.getBBox().width;
+                        if (w > 0) bg.setAttribute('width', String(Math.ceil(w) + 15));
+                    }
                 }
             } catch (e) {
                 console.error('Legend pruning failed:', e);
@@ -1852,7 +1899,6 @@
             const alignTimeline = document.getElementById('align-timeline').checked;
             const showRate = document.getElementById('show-rate').checked;
             const chartContainer = document.getElementById('chart');
-            const rateCanvas = document.getElementById('rate-chart');
 
             // Show the rate controls only in rate view; the width selector acts
             // as smoothing scale (FWHM) in smooth mode and bin width in binned
@@ -1867,18 +1913,12 @@
             document.getElementById('bin-width-label').textContent =
                 estimatorChoice === 'smooth' ? 'Smoothing:' : 'Bin width:';
 
-            // Clear previous charts (both views)
+            // Clear the previous chart (both views render into the same svg)
             while (chartContainer.firstChild) {
                 chartContainer.removeChild(chartContainer.firstChild);
             }
-            if (rateChart) {
-                rateChart.destroy();
-                rateChart = null;
-            }
             rateData = null;
             renderFitSummary([]);
-            chartContainer.style.display = showRate ? 'none' : 'block';
-            rateCanvas.style.display = showRate ? 'block' : 'none';
 
             if (Object.keys(recidData).length === 0) return;
 
@@ -2023,79 +2063,24 @@
 
         }
 
-        // Present-rate annotation: a small "value ± err" label in the series
-        // color, in the right margin next to each curve's latest point.
-        const presentRateLabelPlugin = {
-            id: 'presentRateLabel',
-            afterDatasetsDraw: (chart) => {
-                const ctx = chart.ctx;
-                const annos = [];
-                chart.data.datasets.forEach((ds, i) => {
-                    if (!ds.label || ds.label.startsWith('__')) return;
-                    if (!chart.isDatasetVisible(i)) return;
-                    const data = ds.data;
-                    if (!data || data.length === 0) return;
-                    const p = data[data.length - 1];
-                    const err = (p.hi - p.lo) / 2;
-                    const dec = p.y < 10 ? 1 : 0;
-                    const lines = [`${p.y.toFixed(dec)} ± ${err.toFixed(dec)}`];
-                    // Projected ultimate citation count from the WSB fit;
-                    // withheld entirely when the extrapolation is unreliable
-                    if (ds.wsbSummary && ds.wsbSummary.ok && ds.wsbSummary.reliable) {
-                        const s = ds.wsbSummary;
-                        let t = 'total ' + formatCountWithError(s.cinf, (s.hi - s.lo) / 2);
-                        if (s.unstable) t += '?';
-                        lines.push(t);
-                    }
-                    annos.push({
-                        lines: lines,
-                        color: ds.borderColor,
-                        y: chart.scales.y.getPixelForValue(p.y)
-                    });
-                });
-                if (annos.length === 0) return;
-                // keep labels inside the plot vertically, without overlaps
-                const heightOf = a => a.lines.length * 13;
-                const top = chart.chartArea.top + 6;
-                const bottom = chart.chartArea.bottom - 6;
-                annos.sort((a, b) => a.y - b.y);
-                annos.forEach(a => { a.y = Math.min(Math.max(a.y, top), bottom - (heightOf(a) - 13)); });
-                for (let i = 1; i < annos.length; i++) {
-                    const minGap = heightOf(annos[i - 1]) + 2;
-                    if (annos[i].y - annos[i - 1].y < minGap) {
-                        annos[i].y = annos[i - 1].y + minGap;
-                    }
-                }
-                ctx.save();
-                ctx.font = '11px "Comic Sans MS", "Comic Sans", cursive';
-                ctx.textAlign = 'left';
-                ctx.textBaseline = 'middle';
-                annos.forEach(a => {
-                    ctx.fillStyle = a.color;
-                    a.lines.forEach((line, li) => {
-                        ctx.fillText(line, chart.chartArea.right + 6, a.y + li * 13);
-                    });
-                });
-                ctx.restore();
-            }
-        };
-
-        // Render the citation-rate view (binned Poisson rate with 68% bands)
-        // using Chart.js, which supports shaded bands and a native time axis.
+        // Render the citation-rate view with chart.xkcd, so it shares the
+        // cumulative view's style exactly (comic look, sizing, legend,
+        // tooltips). chart.xkcd draws every dataset the same way - a solid
+        // monotone line with dots and a legend row - so the extras this view
+        // needs (shaded 68% bands, dashed provisional tails, dashed model
+        // curves, present-rate labels, error bars in tooltips) are applied to
+        // the rendered SVG afterwards by decorateRateChart, and the helper
+        // datasets' legend rows are pruned.
         function renderRateChart(Mode) {
-            const rateCanvas = document.getElementById('rate-chart');
-            if (!window.Chart) {
-                alert('Chart.js failed to load; the citation rate view is unavailable.');
-                return;
-            }
-
+            const chartContainer = document.getElementById('chart');
             const binOverride = parseInt(document.getElementById('bin-width').value) || 0;
             const estimator = document.getElementById('rate-estimator').value;
             const blocksP0 = parseFloat(document.getElementById('blocks-p0').value) || BLOCKS_P0;
             const wsbOn = document.getElementById('wsb-fit').checked;
-            Chart.defaults.font.family = '"Comic Sans MS", "Comic Sans", cursive';
 
-            const datasets = [];
+            // Per-paper plotting plan: central curve split into a solid part
+            // and a provisional (dashed) tail, band edges, optional model fit
+            const papers = [];
             const fitEntries = [];
             rateData = [];
             let colorIndex = 0;
@@ -2115,68 +2100,33 @@
 
                 const color = COLORS[colorIndex % COLORS.length];
                 colorIndex++;
-                const points = series.points;
-                const stepStyle = estimator === 'binned' ? 'middle' : false;
                 rateData.push({
                     recid: recid,
                     label: record.refname,
                     estimator: estimator,
                     widthMonths: estimator === 'binned' ? series.binMonths : series.widthMonths,
-                    points: points
+                    points: series.points
                 });
 
-                // Central estimate; the provisional part near the present
-                // (incomplete current bin / last sigma) is drawn dashed.
-                const centralDs = {
-                    groupKey: recid,
+                const plotPts = estimator === 'binned' ?
+                    binnedToCorners(series.points, Mode) : series.points;
+                let tailFrom = plotPts.length;
+                for (let i = 0; i < plotPts.length; i++) {
+                    if (plotPts[i].partial) { tailFrom = i; break; }
+                }
+                const paper = {
                     label: record.refname,
-                    data: points,
-                    borderColor: color,
-                    backgroundColor: color,
-                    stepped: stepStyle,
-                    tension: 0,
-                    cubicInterpolationMode: estimator === 'blocks' ? 'monotone' : 'default',
-                    borderWidth: 2.5,
-                    pointRadius: estimator === 'binned' ? 2.5 : 0,
-                    pointHoverRadius: estimator === 'binned' ? 4 : 3,
-                    pointHitRadius: estimator === 'binned' ? 10 : 8,
-                    pointBackgroundColor: (ctx) =>
-                        points[ctx.dataIndex] && points[ctx.dataIndex].partial ? '#ffffff' : color,
-                    segment: {
-                        borderDash: (ctx) =>
-                            points[ctx.p1DataIndex] && points[ctx.p1DataIndex].partial ? [6, 4] : undefined
-                    }
+                    color: color,
+                    main: plotPts.slice(0, Math.max(tailFrom, 1)),
+                    tail: tailFrom < plotPts.length ? plotPts.slice(Math.max(tailFrom - 1, 0)) : [],
+                    band: plotPts,
+                    last: series.points[series.points.length - 1],
+                    wsb: null,
+                    fit: null
                 };
-                datasets.push(centralDs);
-                // 68% band: invisible upper edge, lower edge filled up to it.
-                datasets.push({
-                    groupKey: recid,
-                    label: '__band_hi_' + recid,
-                    data: points.map(p => ({ x: p.x, y: p.hi })),
-                    borderWidth: 0,
-                    pointRadius: 0,
-                    pointHitRadius: 0,
-                    stepped: stepStyle,
-                    tension: 0,
-                    cubicInterpolationMode: estimator === 'blocks' ? 'monotone' : 'default',
-                    backgroundColor: 'transparent'
-                });
-                datasets.push({
-                    groupKey: recid,
-                    label: '__band_lo_' + recid,
-                    data: points.map(p => ({ x: p.x, y: p.lo })),
-                    borderWidth: 0,
-                    pointRadius: 0,
-                    pointHitRadius: 0,
-                    stepped: stepStyle,
-                    tension: 0,
-                    cubicInterpolationMode: estimator === 'blocks' ? 'monotone' : 'default',
-                    fill: '-1',
-                    backgroundColor: hexToRgba(color, 0.18)
-                });
 
-                // Optional WSB model overlay: dashed fitted rate curve plus the
-                // projected ultimate citation count in the margin
+                // Optional WSB model overlay: dashed fitted rate curve, with
+                // the verdict spelled out under the chart
                 if (wsbOn) {
                     const base = getCitationOffsets(record);
                     if (base) {
@@ -2186,7 +2136,7 @@
                             fit = wsbFit(base.offsets, base.spanMonths);
                             wsbCache.set(key, fit);
                         }
-                        centralDs.wsbSummary = fit;
+                        paper.fit = fit;
                         if (!fit.ok) {
                             fitEntries.push({ color: color, text: 'model fit: ' + fit.reason });
                         } else if (fit.reliable) {
@@ -2200,89 +2150,301 @@
                         }
                         if (fit.ok) {
                             const curve = wsbRateCurve(fit, base.spanMonths);
-                            datasets.push({
-                                groupKey: recid,
-                                label: '__wsb_' + recid,
-                                data: curve.map(p => ({ x: rateXValue(base.pubDate, p.t, Mode), y: p.y })),
-                                borderColor: color,
-                                borderDash: [8, 5],
-                                borderWidth: 1.8,
-                                pointRadius: 0,
-                                pointHitRadius: 0,
-                                fill: false,
-                                tension: 0.25
-                            });
+                            paper.wsb = curve.map(p => ({ x: rateXValue(base.pubDate, p.t, Mode), y: p.y }));
                         }
                     }
                 }
+                papers.push(paper);
             });
 
             renderFitSummary(fitEntries);
+            if (papers.length === 0) return;
 
-            const xScale = Mode !== 0 ? {
-                type: 'linear',
-                beginAtZero: true,
-                title: {
-                    display: true,
-                    text: Mode === 2 ? 'Years since publication' : 'Months since publication'
+            // Datasets: the papers' central curves first, so the legend lists
+            // exactly them; helper datasets follow and their legend rows are
+            // pruned after rendering. plan is index-aligned with datasets and
+            // drives the post-render decoration.
+            const datasets = [];
+            const dataColors = [];
+            const helperLabels = [];
+            const plan = [];
+            const xy = p => ({ x: p.x, y: p.y });
+            papers.forEach(paper => {
+                datasets.push({ label: paper.label, data: paper.main.map(xy) });
+                dataColors.push(paper.color);
+                plan.push({ kind: 'main', paper: paper });
+            });
+            papers.forEach(paper => {
+                if (paper.tail.length > 1) {
+                    datasets.push({ label: 'now (provisional)', data: paper.tail.map(xy) });
+                    dataColors.push(paper.color);
+                    helperLabels.push('now (provisional)');
+                    plan.push({ kind: 'tail', paper: paper });
                 }
-            } : {
-                type: 'time',
-                time: { tooltipFormat: 'MMM d, yyyy' },
-                title: { display: true, text: 'Date' }
-            };
-
-            rateChart = new Chart(rateCanvas, {
-                type: 'line',
-                data: { datasets: datasets },
-                plugins: [presentRateLabelPlugin],
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false, // fill the fixed-aspect container
-                    devicePixelRatio: 2,
-                    animation: false,
-                    layout: { padding: { right: 110 } },
-                    interaction: { mode: 'nearest', intersect: true },
-                    plugins: {
-                        title: { display: true, text: 'Citation Rate', font: { size: 20 } },
-                        legend: {
-                            labels: { filter: (item) => !item.text.startsWith('__') },
-                            // Toggle a paper together with its band and model datasets
-                            onClick: (e, legendItem, legend) => {
-                                const ci = legend.chart;
-                                const key = ci.data.datasets[legendItem.datasetIndex].groupKey;
-                                const visible = ci.isDatasetVisible(legendItem.datasetIndex);
-                                ci.data.datasets.forEach((d, j) => {
-                                    if (d.groupKey === key) ci.setDatasetVisibility(j, !visible);
-                                });
-                                ci.update();
-                            }
-                        },
-                        tooltip: {
-                            filter: (item) => !item.dataset.label.startsWith('__'),
-                            callbacks: {
-                                label: (ctx) => {
-                                    const p = ctx.raw;
-                                    const up = p.hi - p.y;
-                                    const dn = p.y - p.lo;
-                                    if (!(up > 0 || dn > 0)) return p.y.toFixed(1);
-                                    if (Math.abs(up - dn) < 0.15 * Math.max(up, dn)) {
-                                        return `${p.y.toFixed(1)} ± ${((up + dn) / 2).toFixed(1)}`;
-                                    }
-                                    return `${p.y.toFixed(1)} +${up.toFixed(1)} -${dn.toFixed(1)}`;
-                                }
-                            }
-                        }
-                    },
-                    scales: {
-                        x: xScale,
-                        y: {
-                            beginAtZero: true,
-                            title: { display: true, text: 'Citations per year' }
-                        }
-                    }
+                datasets.push({ label: 'upper 68%', data: paper.band.map(p => ({ x: p.x, y: p.hi })) });
+                dataColors.push(hexToRgba(paper.color, 0.5));
+                helperLabels.push('upper 68%');
+                plan.push({ kind: 'hi', paper: paper });
+                datasets.push({ label: 'lower 68%', data: paper.band.map(p => ({ x: p.x, y: p.lo })) });
+                dataColors.push(hexToRgba(paper.color, 0.5));
+                helperLabels.push('lower 68%');
+                plan.push({ kind: 'lo', paper: paper });
+                if (paper.wsb) {
+                    datasets.push({ label: 'model fit', data: paper.wsb });
+                    dataColors.push(hexToRgba(paper.color, 0.45));
+                    helperLabels.push('model fit');
+                    plan.push({ kind: 'wsb', paper: paper });
                 }
             });
+
+            // Blank zone to the right of the curves for the present-rate
+            // labels: chart.xkcd's right margin is a fixed 30px, so the room
+            // is made inside the plot by padding the x-domain with a single
+            // invisible point (its y sits at the existing minimum so the
+            // y-scale is untouched)
+            let xMin = Infinity, xMax = -Infinity, yMin = Infinity;
+            datasets.forEach(ds => ds.data.forEach(q => {
+                const v = Mode === 0 ? q.x.getTime() : q.x;
+                if (v < xMin) xMin = v;
+                if (v > xMax) xMax = v;
+                if (q.y < yMin) yMin = q.y;
+            }));
+            const plotW = Math.max((chartContainer.parentElement.clientWidth || 600) - 100, 220);
+            const padFrac = Math.min(0.4, 110 / plotW);
+            const padX = xMax + Math.max(xMax - xMin, 1) * padFrac / (1 - padFrac);
+            datasets.push({ label: '', data: [{ x: Mode === 0 ? new Date(padX) : padX, y: yMin }] });
+            dataColors.push('rgba(0,0,0,0)');
+            helperLabels.push('');
+            plan.push({ kind: 'pad' });
+
+            try {
+                const config = {
+                    title: 'Citation Rate',
+                    xLabel: Mode !== 0 ? (Mode === 2 ? 'Timeline (Years)' : 'Timeline (Months)') : 'Date',
+                    yLabel: 'Citations per year',
+                    data: { datasets: datasets },
+                    options: {
+                        xTickCount: 5,
+                        yTickCount: 5,
+                        legendPosition: chartXkcd.config.positionType.upLeft,
+                        showLine: true,
+                        dotSize: 0.5,
+                        dataColors: dataColors,
+                        timeFormat: Mode !== 0 ? '' : 'MMM D, YYYY'
+                    }
+                };
+
+                chart = new chartXkcd.XY(chartContainer, config);
+                pruneFitLegendRows(chartContainer, helperLabels);
+                decorateRateChart(chartContainer, plan, Mode);
+            } catch (error) {
+                console.error('Error creating rate chart:', error);
+                alert('Error creating chart: ' + error.message);
+            }
+        }
+
+        // Post-render SVG adjustments for the rate view. plan is
+        // index-aligned with the rendered datasets (chart.xkcd draws one
+        // path.xkcd-chart-xyline and one dot group per dataset, in order).
+        // Fails silently: the chart stays readable without decorations.
+        function decorateRateChart(svgSource, plan, Mode) {
+            // chart.xkcd's fixed layout (title, xLabel and yLabel all set)
+            const M = { top: 60, right: 30, bottom: 50, left: 70 };
+            const NS = 'http://www.w3.org/2000/svg';
+            try {
+                // Swap the svg for a clone of itself: this drops chart.xkcd's
+                // per-dot tooltip handlers (its tooltips cannot show the
+                // error bars); replacements are attached below.
+                const svg = svgSource.cloneNode(true);
+                svgSource.parentNode.replaceChild(svg, svgSource);
+
+                const lines = Array.from(svg.querySelectorAll('path.xkcd-chart-xyline'));
+                if (lines.length !== plan.length) return;
+                const groups = {};
+                Array.from(svg.querySelectorAll('g[xy-group-index]')).forEach(g => {
+                    groups[Number(g.getAttribute('xy-group-index'))] = g;
+                });
+                const graphG = lines[0].parentNode;
+                const filterAttr = lines[0].getAttribute('filter');
+                const innerW = (parseFloat(svg.getAttribute('width')) || 0) - M.left - M.right;
+                const innerH = (parseFloat(svg.getAttribute('height')) || 0) - M.top - M.bottom;
+
+                // Shaded 68% bands: filled polygons between each pair of band
+                // edge paths, sampled along their length, under the curves
+                const sample = (p, nSteps) => {
+                    const total = p.getTotalLength();
+                    const pts = [];
+                    for (let i = 0; i <= nSteps; i++) {
+                        const q = p.getPointAtLength(total * i / nSteps);
+                        pts.push(q.x.toFixed(1) + ',' + q.y.toFixed(1));
+                    }
+                    return pts;
+                };
+                plan.forEach((d, i) => {
+                    if (d.kind !== 'hi') return;
+                    const j = plan.findIndex(e => e.kind === 'lo' && e.paper === d.paper);
+                    if (j < 0) return;
+                    const fill = document.createElementNS(NS, 'path');
+                    fill.setAttribute('class', 'rate-band-fill');
+                    fill.setAttribute('d', 'M' + sample(lines[i], 64).concat(sample(lines[j], 64).reverse()).join('L') + 'Z');
+                    fill.setAttribute('fill', hexToRgba(d.paper.color, 0.16));
+                    fill.setAttribute('stroke', 'none');
+                    if (filterAttr) fill.setAttribute('filter', filterAttr);
+                    graphG.insertBefore(fill, lines[0]);
+                });
+
+                // Per-dataset styling: hide the band edges and the padding
+                // point, dash the provisional tails and the model curves,
+                // hollow out the tail dots
+                plan.forEach((d, i) => {
+                    const path = lines[i];
+                    const grp = groups[i];
+                    if (d.kind === 'hi' || d.kind === 'lo' || d.kind === 'pad') {
+                        path.setAttribute('display', 'none');
+                        if (grp) grp.remove();
+                    } else if (d.kind === 'wsb') {
+                        path.setAttribute('stroke-dasharray', '10,6');
+                        path.setAttribute('stroke-width', '2');
+                        if (grp) grp.remove();
+                    } else if (d.kind === 'tail') {
+                        path.setAttribute('stroke-dasharray', '7,7');
+                        if (grp) {
+                            Array.from(grp.querySelectorAll('circle')).forEach(c => {
+                                c.style.fill = '#ffffff';
+                            });
+                        }
+                    }
+                });
+
+                // Present-rate labels next to each curve's endpoint, inside
+                // the padded zone, pushed apart when papers end close together
+                const annos = [];
+                plan.forEach((d, i) => {
+                    if (d.kind !== 'main') return;
+                    const tailIdx = plan.findIndex(e => e.kind === 'tail' && e.paper === d.paper);
+                    const endGrp = (tailIdx >= 0 && groups[tailIdx]) ? groups[tailIdx] : groups[i];
+                    const circles = endGrp ? endGrp.querySelectorAll('circle') : [];
+                    if (!circles.length) return;
+                    const lastDot = circles[circles.length - 1];
+                    annos.push({
+                        x: parseFloat(lastDot.getAttribute('cx')) + 8,
+                        y: parseFloat(lastDot.getAttribute('cy')),
+                        color: d.paper.color,
+                        lines: presentRateLines(d.paper.last, d.paper.fit)
+                    });
+                });
+                const rowH = 14;
+                annos.sort((a, b) => a.y - b.y);
+                annos.forEach(a => {
+                    // keep labels inside the plot and clear of the x-axis line
+                    a.y = Math.min(Math.max(a.y, 10), innerH - rowH * (a.lines.length - 1) - 10);
+                });
+                for (let i = 1; i < annos.length; i++) {
+                    const minGap = rowH * annos[i - 1].lines.length + 2;
+                    if (annos[i].y - annos[i - 1].y < minGap) {
+                        annos[i].y = annos[i - 1].y + minGap;
+                    }
+                }
+                annos.forEach(a => {
+                    a.lines.forEach((textLine, li) => {
+                        const t = document.createElementNS(NS, 'text');
+                        t.setAttribute('class', 'rate-now-label');
+                        t.setAttribute('x', a.x.toFixed(1));
+                        t.setAttribute('y', (a.y + li * rowH + 4).toFixed(1));
+                        t.setAttribute('fill', a.color);
+                        t.setAttribute('font-size', '12');
+                        t.textContent = textLine;
+                        graphG.appendChild(t);
+                    });
+                });
+
+                // Tooltip in chart.xkcd's own style (rounded sketchy box,
+                // bold title, colored swatch), carrying the 68% error
+                const tip = document.createElementNS(NS, 'svg');
+                tip.setAttribute('class', 'rate-tooltip');
+                tip.style.visibility = 'hidden';
+                const tipBg = document.createElementNS(NS, 'rect');
+                tipBg.setAttribute('fill', 'white');
+                tipBg.setAttribute('fill-opacity', '0.9');
+                tipBg.setAttribute('stroke', 'black');
+                tipBg.setAttribute('stroke-width', '2');
+                tipBg.setAttribute('rx', '5');
+                tipBg.setAttribute('ry', '5');
+                tipBg.setAttribute('x', '5');
+                tipBg.setAttribute('y', '5');
+                if (filterAttr) tipBg.setAttribute('filter', filterAttr);
+                const tipTitle = document.createElementNS(NS, 'text');
+                tipTitle.setAttribute('x', '15');
+                tipTitle.setAttribute('y', '25');
+                tipTitle.style.fontSize = '15px';
+                tipTitle.style.fontWeight = 'bold';
+                const tipSwatch = document.createElementNS(NS, 'rect');
+                tipSwatch.setAttribute('width', '8');
+                tipSwatch.setAttribute('height', '8');
+                tipSwatch.setAttribute('rx', '2');
+                tipSwatch.setAttribute('ry', '2');
+                tipSwatch.setAttribute('x', '15');
+                tipSwatch.setAttribute('y', '37');
+                const tipText = document.createElementNS(NS, 'text');
+                tipText.setAttribute('x', '27');
+                tipText.setAttribute('y', '45');
+                tipText.style.fontSize = '15px';
+                tip.appendChild(tipBg);
+                tip.appendChild(tipTitle);
+                tip.appendChild(tipSwatch);
+                tip.appendChild(tipText);
+                svg.appendChild(tip);
+
+                const fmtX = (p) => {
+                    const x = p.trueX !== undefined ? p.trueX : p.x;
+                    if (Mode === 0) {
+                        return (x instanceof Date ? x : new Date(x)).toLocaleDateString('en-US',
+                            { month: 'short', day: 'numeric', year: 'numeric' });
+                    }
+                    return (Math.round(x * 10) / 10) + (Mode === 2 ? ' yr' : ' mo');
+                };
+                const dotR = 1.75, dotHoverR = 3; // 3.5x resp. 6x dotSize 0.5
+                svg.addEventListener('mouseover', (ev) => {
+                    const c = ev.target;
+                    if (!c || c.tagName !== 'circle' || !c.parentElement) return;
+                    const gi = c.parentElement.getAttribute('xy-group-index');
+                    if (gi === null) return;
+                    const d = plan[Number(gi)];
+                    if (!d || (d.kind !== 'main' && d.kind !== 'tail')) return;
+                    const idx = Array.prototype.indexOf.call(c.parentElement.children, c);
+                    const p = d.kind === 'main' ? d.paper.main[idx] : d.paper.tail[idx];
+                    if (!p) return;
+                    c.setAttribute('r', dotHoverR);
+                    tipTitle.textContent = fmtX(p);
+                    tipSwatch.style.fill = d.paper.color;
+                    tipText.textContent = d.paper.label + ': ' + rateTooltipText(p);
+                    let w = 180;
+                    try {
+                        w = Math.max(tipTitle.getBBox().width, tipText.getBBox().width + 12) + 20;
+                    } catch (e) { /* getBBox needs layout; keep the fallback */ }
+                    tipBg.setAttribute('width', w.toFixed(0));
+                    tipBg.setAttribute('height', '50');
+                    const cx = parseFloat(c.getAttribute('cx'));
+                    const cy = parseFloat(c.getAttribute('cy'));
+                    let tx = cx + M.left + 5;
+                    let ty = cy + M.top + 5;
+                    if (cx > innerW / 2) tx -= w + 20;
+                    if (cy > innerH / 2) ty -= 70;
+                    tip.setAttribute('x', tx.toFixed(0));
+                    tip.setAttribute('y', ty.toFixed(0));
+                    tip.style.visibility = 'visible';
+                });
+                svg.addEventListener('mouseout', (ev) => {
+                    const c = ev.target;
+                    if (c && c.tagName === 'circle' && c.parentElement &&
+                        c.parentElement.getAttribute('xy-group-index') !== null) {
+                        c.setAttribute('r', dotR);
+                    }
+                    tip.style.visibility = 'hidden';
+                });
+            } catch (e) {
+                console.error('Rate chart decoration failed:', e);
+            }
         }
 
         // --------------------------------
@@ -2740,26 +2902,6 @@
         
         // Function to save chart as image
         function saveChartAsImage() {
-            // Rate view renders to a canvas; composite it on white and download
-            if (document.getElementById('show-rate').checked && rateChart) {
-                const sourceCanvas = document.getElementById('rate-chart');
-                const exportCanvas = document.createElement('canvas');
-                exportCanvas.width = sourceCanvas.width;
-                exportCanvas.height = sourceCanvas.height;
-                const exportCtx = exportCanvas.getContext('2d');
-                exportCtx.fillStyle = 'white';
-                exportCtx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
-                exportCtx.drawImage(sourceCanvas, 0, 0);
-                exportCanvas.toBlob(function(blob) {
-                    const link = document.createElement('a');
-                    link.download = 'citation-rate.png';
-                    link.href = URL.createObjectURL(blob);
-                    link.click();
-                    URL.revokeObjectURL(link.href);
-                }, 'image/png', 1.0);
-                return;
-            }
-
             const svgElement = document.getElementById('chart');
             
             // Create a canvas element with higher resolution
@@ -2788,7 +2930,8 @@
                 // Convert canvas to blob and download
                 canvas.toBlob(function(blob) {
                     const link = document.createElement('a');
-                    link.download = 'citation-history.png';
+                    link.download = document.getElementById('show-rate').checked ?
+                        'citation-rate.png' : 'citation-history.png';
                     link.href = URL.createObjectURL(blob);
                     link.click();
                     URL.revokeObjectURL(link.href);

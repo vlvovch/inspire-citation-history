@@ -26,12 +26,6 @@ if (sectionStart < 0 || sectionEnd < 0 || sectionEnd <= sectionStart) {
     console.error('FAIL: could not locate rate estimation section');
     process.exit(1);
 }
-const pluginStart = scriptBody.indexOf('// Present-rate annotation');
-const pluginEnd = scriptBody.indexOf('// Render the citation-rate view');
-if (pluginStart < 0 || pluginEnd < 0 || pluginEnd <= pluginStart) {
-    console.error('FAIL: could not locate annotation plugin section');
-    process.exit(1);
-}
 const backoffStart = scriptBody.indexOf('function computeBackoffDelayMs');
 const backoffEnd = scriptBody.indexOf('async function inspireFetch');
 if (backoffStart < 0 || backoffEnd < 0 || backoffEnd <= backoffStart) {
@@ -57,13 +51,13 @@ if (idStart < 0 || idEnd < 0 || idEnd <= idStart) {
     process.exit(1);
 }
 const section = scriptBody.slice(sectionStart, sectionEnd)
-    .replace(/^\s*\/\/ -+\s*$/gm, '') + '\n' + scriptBody.slice(pluginStart, pluginEnd)
+    .replace(/^\s*\/\/ -+\s*$/gm, '')
     + '\n' + scriptBody.slice(idStart, idEnd) + '\n' + scriptBody.slice(backoffStart, backoffEnd)
     + '\n' + scriptBody.slice(cacheStart, cacheEnd) + '\n' + scriptBody.slice(spreadStart, spreadEnd);
 const sandbox = {};
 vm.createContext(sandbox);
-vm.runInContext(section + '\nthis.poissonInterval68 = poissonInterval68; this.chooseBinWidthMonths = chooseBinWidthMonths; this.computeRateSeries = computeRateSeries; this.hexToRgba = hexToRgba; this.erf = erf; this.normCdf = normCdf; this.computeSmoothRateSeries = computeSmoothRateSeries; this.presentRateLabelPlugin = presentRateLabelPlugin; this.parseRecordIdentifier = parseRecordIdentifier; this.computeBackoffDelayMs = computeBackoffDelayMs; this.cacheLoad = cacheLoad; this.cacheSave = cacheSave; this.cacheEvictOldest = cacheEvictOldest; this.cacheKeys = cacheKeys; this.safeLocalStorage = safeLocalStorage; this.CACHE_PREFIX = CACHE_PREFIX; this.CACHE_TTL_MS = CACHE_TTL_MS; this.CACHE_MAX_ENTRIES = CACHE_MAX_ENTRIES; this.bayesianBlocksEdges = bayesianBlocksEdges; this.computeBlocksRateSeries = computeBlocksRateSeries; this.BLOCKS_P0 = BLOCKS_P0; this.spreadImpreciseDates = spreadImpreciseDates; this.cacheRemoveOldVersions = cacheRemoveOldVersions; this.normInv = normInv; this.wsbProfile = wsbProfile; this.wsbFitCore = wsbFitCore; this.wsbFit = wsbFit; this.wsbSimulate = wsbSimulate; this.wsbBootstrap = wsbBootstrap; this.wsbRateCurve = wsbRateCurve; this.formatCitationCount = formatCitationCount; this.WSB_M = WSB_M; this.WSB_MIN_MONTHS = WSB_MIN_MONTHS; this.WSB_MIN_CITATIONS = WSB_MIN_CITATIONS; this.wsbCumulativeCurve = wsbCumulativeCurve; this.formatCountWithError = formatCountWithError;', sandbox);
-const { poissonInterval68, chooseBinWidthMonths, computeRateSeries, hexToRgba, erf, normCdf, computeSmoothRateSeries, presentRateLabelPlugin, parseRecordIdentifier, computeBackoffDelayMs, cacheLoad, cacheSave, cacheEvictOldest, cacheKeys, safeLocalStorage, CACHE_PREFIX, CACHE_TTL_MS, CACHE_MAX_ENTRIES, bayesianBlocksEdges, computeBlocksRateSeries, BLOCKS_P0, spreadImpreciseDates, cacheRemoveOldVersions, normInv, wsbProfile, wsbFitCore, wsbFit, wsbSimulate, wsbBootstrap, wsbRateCurve, formatCitationCount, WSB_M, WSB_MIN_MONTHS, WSB_MIN_CITATIONS, wsbCumulativeCurve, formatCountWithError } = sandbox;
+vm.runInContext(section + '\nthis.poissonInterval68 = poissonInterval68; this.chooseBinWidthMonths = chooseBinWidthMonths; this.computeRateSeries = computeRateSeries; this.hexToRgba = hexToRgba; this.erf = erf; this.normCdf = normCdf; this.computeSmoothRateSeries = computeSmoothRateSeries; this.binnedToCorners = binnedToCorners; this.presentRateLines = presentRateLines; this.rateTooltipText = rateTooltipText; this.parseRecordIdentifier = parseRecordIdentifier; this.computeBackoffDelayMs = computeBackoffDelayMs; this.cacheLoad = cacheLoad; this.cacheSave = cacheSave; this.cacheEvictOldest = cacheEvictOldest; this.cacheKeys = cacheKeys; this.safeLocalStorage = safeLocalStorage; this.CACHE_PREFIX = CACHE_PREFIX; this.CACHE_TTL_MS = CACHE_TTL_MS; this.CACHE_MAX_ENTRIES = CACHE_MAX_ENTRIES; this.bayesianBlocksEdges = bayesianBlocksEdges; this.computeBlocksRateSeries = computeBlocksRateSeries; this.BLOCKS_P0 = BLOCKS_P0; this.spreadImpreciseDates = spreadImpreciseDates; this.cacheRemoveOldVersions = cacheRemoveOldVersions; this.normInv = normInv; this.wsbProfile = wsbProfile; this.wsbFitCore = wsbFitCore; this.wsbFit = wsbFit; this.wsbSimulate = wsbSimulate; this.wsbBootstrap = wsbBootstrap; this.wsbRateCurve = wsbRateCurve; this.formatCitationCount = formatCitationCount; this.WSB_M = WSB_M; this.WSB_MIN_MONTHS = WSB_MIN_MONTHS; this.WSB_MIN_CITATIONS = WSB_MIN_CITATIONS; this.wsbCumulativeCurve = wsbCumulativeCurve; this.formatCountWithError = formatCountWithError;', sandbox);
+const { poissonInterval68, chooseBinWidthMonths, computeRateSeries, hexToRgba, erf, normCdf, computeSmoothRateSeries, binnedToCorners, presentRateLines, rateTooltipText, parseRecordIdentifier, computeBackoffDelayMs, cacheLoad, cacheSave, cacheEvictOldest, cacheKeys, safeLocalStorage, CACHE_PREFIX, CACHE_TTL_MS, CACHE_MAX_ENTRIES, bayesianBlocksEdges, computeBlocksRateSeries, BLOCKS_P0, spreadImpreciseDates, cacheRemoveOldVersions, normInv, wsbProfile, wsbFitCore, wsbFit, wsbSimulate, wsbBootstrap, wsbRateCurve, formatCitationCount, WSB_M, WSB_MIN_MONTHS, WSB_MIN_CITATIONS, wsbCumulativeCurve, formatCountWithError } = sandbox;
 
 // Deterministic PRNG (mulberry32) so stochastic checks are reproducible
 let __seed = 0xC0FFEE;
@@ -277,50 +271,73 @@ check('smooth empty record: zero rate, positive upper limit', (() => {
     check(`smooth MC coverage at interior point in [0.56, 0.80] (got ${covS.toFixed(3)})`, covS > 0.56 && covS < 0.80);
 }
 
-// --- Present-rate annotation plugin: mock chart, record fillText calls ---
+// --- Present-rate label lines and terse tooltip text ---
 {
-    const texts = [];
-    const mockChart = {
-        ctx: {
-            save() {}, restore() {},
-            set font(v) {}, set textAlign(v) {}, set textBaseline(v) {}, set fillStyle(v) { this._fs = v; },
-            fillText(t, x, y) { texts.push({ t, x, y, color: this._fs }); }
-        },
-        chartArea: { top: 10, bottom: 400, right: 700 },
-        scales: { y: { getPixelForValue: (v) => 400 - v } },
-        isDatasetVisible: () => true,
-        data: { datasets: [
-            { label: 'Paper A', borderColor: '#e41a1c', data: [{ y: 55.4, lo: 47.1, hi: 63.2 }] },
-            { label: '__band_hi_1', data: [{ y: 63.2 }] },
-            { label: '__band_lo_1', data: [{ y: 47.1 }] },
-            { label: 'Paper B', borderColor: '#377eb8', data: [{ y: 52.0, lo: 44.0, hi: 60.0 }] },
-            { label: '__band_hi_2', data: [] },
-            { label: '__band_lo_2', data: [] }
-        ] }
-    };
-    presentRateLabelPlugin.afterDatasetsDraw(mockChart);
-    check('plugin draws one label per visible paper (2)', texts.length === 2, 'got ' + texts.length);
-    check('plugin label format value ± halfwidth', texts.some(a => a.t === '55 ± 8'), JSON.stringify(texts.map(a => a.t)));
-    check('plugin labels placed right of the plot area', texts.every(a => a.x === 706));
-    check('plugin labels vertically separated >= 13px', (() => {
-        const ys = texts.map(a => a.y).sort((a, b) => a - b);
-        return ys.length === 2 && ys[1] - ys[0] >= 13;
-    })(), JSON.stringify(texts.map(a => a.y)));
-    check('plugin labels use series colors', texts.every(a => a.color === '#e41a1c' || a.color === '#377eb8'));
-    check('plugin no-ops on empty datasets', (() => {
-        const t2 = [];
-        const mc = { ...mockChart, ctx: { ...mockChart.ctx, fillText: (t) => t2.push(t) },
-            data: { datasets: [{ label: '__band_hi_1', data: [{ y: 1 }] }] } };
-        presentRateLabelPlugin.afterDatasetsDraw(mc);
-        return t2.length === 0;
-    })());
-    check('plugin low-rate label keeps one decimal', (() => {
-        const t3 = [];
-        const mc = { ...mockChart, ctx: { save() {}, restore() {}, set fillStyle(v) {}, fillText: (t) => t3.push(t) },
-            data: { datasets: [{ label: 'P', borderColor: '#000', data: [{ y: 2.34, lo: 1.1, hi: 3.9 }] }] } };
-        presentRateLabelPlugin.afterDatasetsDraw(mc);
-        return t3.length === 1 && t3[0] === '2.3 \u00b1 1.4';
-    })());
+    const lines = presentRateLines({ y: 55.4, lo: 47.1, hi: 63.2 }, null);
+    check('label line is value \u00b1 halfwidth', lines.length === 1 && lines[0] === '55 \u00b1 8', JSON.stringify(lines));
+    const lowLines = presentRateLines({ y: 2.34, lo: 1.1, hi: 3.9 }, null);
+    check('low-rate label keeps one decimal', lowLines.length === 1 && lowLines[0] === '2.3 \u00b1 1.4', lowLines[0]);
+    const withFit = presentRateLines({ y: 55, lo: 47, hi: 63 },
+        { ok: true, reliable: true, cinf: 3400, lo: 2800, hi: 4200 });
+    check('projection line added for a reliable fit with matched precision',
+        withFit.length === 2 && withFit[1] === 'total (3.4 \u00b1 0.7)k', JSON.stringify(withFit));
+    const noFit = presentRateLines({ y: 55, lo: 47, hi: 63 }, { ok: true, reliable: false, cinf: 7e21 });
+    check('unreliable fit adds no projection line', noFit.length === 1, JSON.stringify(noFit));
+    const unstable = presentRateLines({ y: 55, lo: 47, hi: 63 },
+        { ok: true, reliable: true, unstable: true, cinf: 3400, lo: 2800, hi: 4200 });
+    check('unstable projection flagged with ?', unstable.length === 2 && unstable[1] === 'total (3.4 \u00b1 0.7)k?', unstable[1]);
+
+    check('tooltip symmetric value \u00b1 err',
+        rateTooltipText({ y: 12.34, lo: 10.9, hi: 13.9 }) === '12.3 \u00b1 1.5',
+        rateTooltipText({ y: 12.34, lo: 10.9, hi: 13.9 }));
+    check('tooltip asymmetric +up -down',
+        rateTooltipText({ y: 1.0, lo: 0.2, hi: 3.0 }) === '1.0 +2.0 -0.8',
+        rateTooltipText({ y: 1.0, lo: 0.2, hi: 3.0 }));
+    check('tooltip degenerate interval falls back to the value',
+        rateTooltipText({ y: 5.0, lo: 5.0, hi: 5.0 }) === '5.0');
+}
+
+// --- binnedToCorners: soft-step representation of the binned estimate ---
+{
+    const nowTs = Date.UTC(2026, 0, 1);
+    const mkDates = [];
+    const pubMs = Date.UTC(2020, 0, 1);
+    for (let m = 0; m < 72; m += 0.25) {
+        mkDates.push(new Date(pubMs + m * MS_PER_MONTH).toISOString().slice(0, 10));
+    }
+    const rec = { date: '2020-01-01', citation_dates: mkDates };
+    const series = computeRateSeries(rec, 1, 12, nowTs);
+    check('binned points carry per-bin width w', series.points.every(p => typeof p.w === 'number' && p.w > 0),
+        JSON.stringify(series.points.map(p => p.w)));
+    const corners = binnedToCorners(series.points, 1);
+    check('two corners per bin', corners.length === 2 * series.points.length,
+        corners.length + ' vs ' + series.points.length);
+    check('corner x strictly increasing', corners.every((p, i, a) => i === 0 || p.x > a[i - 1].x),
+        JSON.stringify(corners.map(p => p.x)));
+    check('corners preserve the bin rate and errors', corners.every((p, i) => {
+        const src = series.points[Math.floor(i / 2)];
+        return p.y === src.y && p.lo === src.lo && p.hi === src.hi && p.n === src.n;
+    }));
+    check('corner trueX keeps the bin center for tooltips',
+        corners.every((p, i) => p.trueX === series.points[Math.floor(i / 2)].x));
+    check('first corner exactly at publication', Math.abs(corners[0].x) < 1e-9, String(corners[0].x));
+    const lastPt = series.points[series.points.length - 1];
+    const lastCorner = corners[corners.length - 1];
+    check('last corner exactly at the present edge',
+        Math.abs(lastCorner.x - (lastPt.x + lastPt.w / 2)) < 1e-9,
+        lastCorner.x + ' vs ' + (lastPt.x + lastPt.w / 2));
+    check('interior corners inset for soft steps', corners[1].x < series.points[0].x + series.points[0].w / 2,
+        corners[1].x + ' !< ' + (series.points[0].x + series.points[0].w / 2));
+    check('partial flag confined to the last bin corners',
+        corners.filter(p => p.partial).length === 2 && lastCorner.partial === true,
+        JSON.stringify(corners.map(p => !!p.partial)));
+    const seriesD = computeRateSeries(rec, 0, 12, nowTs);
+    const cornersD = binnedToCorners(seriesD.points, 0);
+    check('date-mode corners are Date objects', // vm realm has its own Date class
+        cornersD.every(p => Object.prototype.toString.call(p.x) === '[object Date]'));
+    check('date-mode corner spacing matches the inset bin width',
+        Math.abs((cornersD[1].x.getTime() - cornersD[0].x.getTime()) / MS_PER_MONTH - 10.5) < 0.05,
+        String((cornersD[1].x.getTime() - cornersD[0].x.getTime()) / MS_PER_MONTH));
 }
 
 // --- Record identifier parser ---
@@ -703,28 +720,5 @@ check('wsb guard: too young', wsbFit(new Array(200).fill(10), 36).ok === false);
         check('wsb still-rising: simulation produced enough events', false, 'N=' + sim.times.length);
     }
 }
-{
-    // Margin plugin renders the projection as a second line
-    const texts = [];
-    const mock = {
-        ctx: { save() {}, restore() {}, set fillStyle(v) {}, fillText: (t, x, y) => texts.push({ t, y }) },
-        chartArea: { top: 10, bottom: 400, right: 700 },
-        scales: { y: { getPixelForValue: v => 400 - v } },
-        isDatasetVisible: () => true,
-        data: { datasets: [
-            { label: 'A', borderColor: '#e41a1c', data: [{ y: 55, lo: 47, hi: 63 }],
-                wsbSummary: { ok: true, reliable: true, cinf: 3400, lo: 2800, hi: 4200 } },
-            { label: 'B', borderColor: '#377eb8', data: [{ y: 30, lo: 24, hi: 36 }],
-                wsbSummary: { ok: true, reliable: false, cinf: 7e21, phiT: 0.1 } }
-        ] }
-    };
-    presentRateLabelPlugin.afterDatasetsDraw(mock);
-    check('plugin: projection line only for reliable fits', texts.length === 3 &&
-        texts.filter(a => a.t.indexOf('total ') === 0).length === 1, JSON.stringify(texts.map(a => a.t)));
-    const inf = texts.find(a => a.t.indexOf('total ') === 0);
-    check('plugin: projection format in words with matched precision',
-        !!inf && inf.t === 'total (3.4 \u00b1 0.7)k', inf && inf.t);
-}
-
 console.log(failures === 0 ? '\nALL TESTS PASSED' : `\n${failures} TEST(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

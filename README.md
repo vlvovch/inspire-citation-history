@@ -72,7 +72,7 @@ The application is built as a single HTML file with embedded JavaScript that:
 
 ### Testing
 
-The `tests/` directory contains a plain-Node test suite (no dependencies to install): `estimator.test.js` validates the citation-rate estimators against exact Poisson intervals and Monte Carlo synthetic data, along with the record identifier parser and API retry backoff; `smoke.test.js` loads the page in headless Chrome/Chromium (auto-detected, override with `CHROME_BIN`) with stubbed chart libraries to check the UI wiring. Both run in CI on every push via GitHub Actions.
+The `tests/` directory contains a plain-Node test suite (no dependencies to install): `estimator.test.js` validates the citation-rate estimators against exact Poisson intervals and Monte Carlo synthetic data, along with the record identifier parser and API retry backoff; `smoke.test.js` loads the page in headless Chrome/Chromium (auto-detected, override with `CHROME_BIN`) with a vendored copy of chart.xkcd (`tests/vendor/`) to check the UI wiring and the rendered SVG. Both run in CI on every push via GitHub Actions.
 
 ## Potential Future Improvements
 
@@ -86,9 +86,7 @@ The `tests/` directory contains a plain-Node test suite (no dependencies to inst
 
 ## Dependencies
 
-- [Chart.js](https://www.chartjs.org/) - Base charting library
-- [chart.xkcd](https://github.com/timqian/chart.xkcd) - For the hand-drawn chart style
-- [date-fns](https://date-fns.org/) (via chartjs-adapter-date-fns) - For date handling
+- [chart.xkcd](https://github.com/timqian/chart.xkcd) - Charting library with the hand-drawn style (both views)
 
 ## License
 
