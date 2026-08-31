@@ -1,0 +1,22 @@
+name: diagnose-dates
+
+on:
+  workflow_dispatch:
+    inputs:
+      recids:
+        description: 'Dash-separated INSPIRE record ids'
+        default: '468266-1474181'
+        required: true
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Fetch and histogram citation dates
+        env:
+          RECIDS: ${{ inputs.recids }}
+        run: node tests/diagnose-dates.js "$RECIDS"
