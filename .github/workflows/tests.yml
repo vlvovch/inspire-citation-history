@@ -1,0 +1,18 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Estimator, parser, and backoff unit tests
+        run: node tests/estimator.test.js
+      - name: Browser smoke test (headless Chrome)
+        run: node tests/smoke.test.js

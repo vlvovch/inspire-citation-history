@@ -7,9 +7,6 @@
         content="width=device-width, initial-scale=1.0"
     />
     <title>INSPIRE Citation History</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <!-- Add the adapter for date-fns -->
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.xkcd@1.1.13/dist/chart.xkcd.min.js"></script>
     <!-- Add Font Awesome for icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
@@ -44,11 +41,16 @@
             min-width: 250px;
         }
         input,
-        button {
+        button,
+        select {
             padding: 8px 12px;
             border: 1px solid #d1d5da;
             border-radius: 6px;
             font-size: 14px;
+        }
+        select {
+            font-family: inherit;
+            background-color: white;
         }
         input {
             width: 100%;
@@ -69,13 +71,38 @@
             cursor: not-allowed;
             opacity: 0.7;
         }
+        /* chart.xkcd sizes its svg to parent width x 2/3 on its own, so the
+           shared container uses that native 3:2 aspect and the rate view
+           fills the same box */
         .chart-container {
             position: relative;
-            height: 100%;
             width: 70%;
+            aspect-ratio: 3 / 2;
             margin: auto auto;
             background: white;
-            /* padding: 20px 60px; */
+        }
+        @media (max-width: 900px) {
+            .chart-container {
+                width: 95%;
+            }
+        }
+        .fit-summary {
+            text-align: center;
+            margin-top: 10px;
+            font-size: 13px;
+            color: #444;
+        }
+        .fit-summary-item {
+            margin: 0 12px;
+            white-space: nowrap;
+        }
+        .fit-summary .color-dot {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 2px;
+            margin-right: 5px;
+            vertical-align: middle;
         }
         
         #chart {
@@ -84,23 +111,6 @@
             display: block;
         }
         
-        .legend {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 15px;
-            margin-top: 20px;
-            justify-content: center;
-        }
-        .legend-item {
-            display: flex;
-            align-items: center;
-            gap: 5px;
-        }
-        .color-box {
-            width: 15px;
-            height: 15px;
-            border-radius: 3px;
-        }
         .repo-tag {
             display: inline-flex;
             align-items: center;
@@ -140,6 +150,9 @@
             align-items: center;
             justify-content: flex-end;
             margin-bottom: 10px;
+            /* as tall as the selects, so the row keeps its height (and the
+               chart its position) when the rate-only selectors are hidden */
+            min-height: 37px;
         }
         .align-checkbox input[type="checkbox"] {
             width: auto;
@@ -149,9 +162,23 @@
         .align-checkbox label {
             vertical-align: middle;
         }
+        /* Status toast overlaid on the chart area: showing and hiding it
+           must not reflow the page (the chart would jump) */
         .loading {
+            position: absolute;
+            top: 8px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 5;
+            max-width: 90%;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
             text-align: center;
-            margin: 20px 0;
+            padding: 4px 14px;
+            background: rgba(255, 255, 255, 0.92);
+            border: 1.5px solid #24292e;
+            border-radius: 8px;
             font-style: italic;
             color: #6a737d;
         }
@@ -199,7 +226,7 @@
         
         <div class="input-container">
             <div class="input-group">
-                <input type="text" id="recid-input" placeholder="Enter INSPIRE-HEP record id as 2178285 or https://inspirehep.net/literature/2178285" />
+                <input type="text" id="recid-input" placeholder="Enter INSPIRE record id (2178285), arXiv id (2208.06843), or DOI (10.1103/PhysRevLett.126.092301)" />
             </div>
             <button id="add-recid">Add record</button>
             <button id="clear-all">Clear all</button>
@@ -208,20 +235,55 @@
         
         <div class="repo-list" id="recid-list"></div>
         
+        <!-- Right-aligned row: the rate-only selector groups come first so
+             toggling them in and out never moves the checkboxes after them -->
         <div class="align-checkbox">
+            <div id="estimator-group" style="display: none; align-items: center; margin-right: 20px;">
+                <label for="rate-estimator" style="margin-right: 5px;">Estimator:</label>
+                <select id="rate-estimator">
+                    <option value="smooth">Smooth</option>
+                    <option value="binned">Binned</option>
+                    <option value="blocks">Bayesian blocks</option>
+                </select>
+            </div>
+            <div id="p0-group" style="display: none; align-items: center; margin-right: 20px;">
+                <label for="blocks-p0" style="margin-right: 5px;">Sensitivity:</label>
+                <select id="blocks-p0">
+                    <option value="0.05">Strict</option>
+                    <option value="0.3">Moderate</option>
+                    <option value="0.9">Eager</option>
+                </select>
+            </div>
+            <div id="bin-width-group" style="display: none; align-items: center; margin-right: 20px;">
+                <label for="bin-width" id="bin-width-label" style="margin-right: 5px;">Smoothing:</label>
+                <select id="bin-width">
+                    <option value="">Auto</option>
+                    <option value="1">1 month</option>
+                    <option value="3">3 months</option>
+                    <option value="6">6 months</option>
+                    <option value="12">1 year</option>
+                </select>
+            </div>
+            <div style="display: flex; align-items: center; margin-right: 20px;">
+                <input type="checkbox" id="show-rate" />
+                <label for="show-rate" style="margin-left: 5px;">Citation rate</label>
+            </div>
+            <div id="wsb-group" style="display: none; align-items: center; margin-right: 20px;">
+                <input type="checkbox" id="wsb-fit" />
+                <label for="wsb-fit" style="margin-left: 5px;">Model fit</label>
+            </div>
             <div style="display: flex; align-items: center;">
                 <input type="checkbox" id="align-timeline" />
                 <label for="align-timeline" style="margin-left: 5px;">Align timeline</label>
             </div>
         </div>
         
-        <div id="loading" class="loading" style="display: none;">Loading citation data...</div>
-        
         <div class="chart-container">
-            <svg id="chart" style="width: 100%; height: 100%; display: block;"></svg>
+            <div id="loading" class="loading" style="display: none;">Loading citation data...</div>
+            <svg id="chart" style="width: 100%; height: 100%; display: block; overflow: visible;"></svg>
         </div>
-        
-        <div class="legend" id="legend-container"></div>
+
+        <div class="fit-summary" id="fit-summary" style="display: none;"></div>
         
         <div class="export-buttons">
             <button id="save-image" class="export-button">
@@ -265,35 +327,6 @@
     </div>
 
     <script>
-        // Override chart.xkcd date formatting
-        document.addEventListener('DOMContentLoaded', function() {
-            if (window.chartXkcd) {
-                // Store the original tooltip formatter
-                const originalTooltipFormatter = chartXkcd.Line.prototype._getTooltipContent;
-                
-                // Override the tooltip formatter to use our custom date format
-                chartXkcd.Line.prototype._getTooltipContent = function(data) {
-                    // Format the date as "Jan 1, 2025"
-                    if (data && data.x) {
-                        const date = new Date(data.x);
-                        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-                        const formattedDate = `${months[date.getMonth()]} ${date.getDate()}, ${date.getFullYear()}`;
-                        data.x = formattedDate;
-                    }
-                    // Call the original formatter with our modified data
-                    return originalTooltipFormatter.call(this, data);
-                };
-                
-                // Override the axis label formatter
-                const originalFormatDate = chartXkcd.formatDate;
-                chartXkcd.formatDate = function(date) {
-                    const d = new Date(date);
-                    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-                    return `${months[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
-                };
-            }
-        });
-        
         // --------------------------------
         // GLOBAL VARIABLES / STATE
         // --------------------------------
@@ -303,10 +336,12 @@
         ];
         
         let recidData = {};   // recid -> { dates: [array of date strings] }
-        let chart = null;     // The single Chart.js instance
+        let chart = null;     // The chart.xkcd instance (either view)
         let chartData = null; // Global variable to store chart data for export
         let debugInfo = [];   // For debug logs
         let isLoading = false; // Flag to track loading state
+        let rateData = null;  // Binned rate series per record, for CSV export
+        const wsbCache = new Map(); // Memoized WSB fits per (recid, N, span)
         
         // --------------------------------
         // DEBUG LOGGING
@@ -373,10 +408,55 @@
                 } else {
                     url.searchParams.delete('align');
                 }
+
+                // Add rate parameters if the rate view is active
+                if (document.getElementById('show-rate').checked) {
+                    url.searchParams.set('rate', 'true');
+                    const binValue = document.getElementById('bin-width').value;
+                    if (binValue) {
+                        url.searchParams.set('bin', binValue);
+                    } else {
+                        url.searchParams.delete('bin');
+                    }
+                    // Smooth is the default estimator; record deviations
+                    const estimatorChoice = document.getElementById('rate-estimator').value;
+                    if (estimatorChoice !== 'smooth') {
+                        url.searchParams.set('est', estimatorChoice);
+                    } else {
+                        url.searchParams.delete('est');
+                    }
+                    url.searchParams.delete('smooth'); // legacy parameter
+                    // Blocks sensitivity, when not the strict default
+                    const p0Value = document.getElementById('blocks-p0').value;
+                    if (estimatorChoice === 'blocks' && p0Value !== '0.05') {
+                        url.searchParams.set('p0', p0Value);
+                    } else {
+                        url.searchParams.delete('p0');
+                    }
+                } else {
+                    url.searchParams.delete('rate');
+                    url.searchParams.delete('bin');
+                    url.searchParams.delete('smooth');
+                    url.searchParams.delete('est');
+                    url.searchParams.delete('p0');
+                }
+
+                // Model fit applies to both views
+                if (document.getElementById('wsb-fit').checked) {
+                    url.searchParams.set('wsb', 'true');
+                } else {
+                    url.searchParams.delete('wsb');
+                }
             } else {
                 // Remove all parameters if no records
                 url.searchParams.delete('recids');
                 url.searchParams.delete('align');
+                url.searchParams.delete('rate');
+                url.searchParams.delete('bin');
+                url.searchParams.delete('smooth');
+                url.searchParams.delete('est');
+                url.searchParams.delete('p0');
+                url.searchParams.delete('wsb');
             }
             
             // Update the URL without reloading the page
@@ -384,21 +464,295 @@
         }
         
         // --------------------------------
+        // RECORD IDENTIFIER PARSING
+        // --------------------------------
+
+        // Classify user input as an INSPIRE record id, arXiv id, or DOI.
+        // Accepts bare identifiers, arXiv:/doi: prefixes, and inspirehep.net,
+        // arxiv.org, and doi.org URLs. Returns {type, value} or null.
+        function parseRecordIdentifier(input) {
+            let value = (input || '').trim();
+            if (!value) return null;
+
+            // INSPIRE literature URL or bare record id
+            let m = value.match(/inspirehep\.net\/(?:api\/)?literature\/(\d+)/i);
+            if (m) return { type: 'recid', value: m[1] };
+            if (/^\d+$/.test(value)) return { type: 'recid', value: value };
+
+            // arXiv: URLs, optional prefix, new-style (2208.06843) and
+            // old-style (hep-ph/9803241, cond-mat.str-el/0407066) ids;
+            // version suffixes are dropped
+            m = value.match(/arxiv\.org\/(?:abs|pdf)\/(.+?)(?:\.pdf)?\/?$/i);
+            if (m) value = m[1];
+            value = value.replace(/^arxiv:\s*/i, '');
+            m = value.match(/^(\d{4}\.\d{4,5})(v\d+)?$/);
+            if (m) return { type: 'arxiv', value: m[1] };
+            m = value.match(/^([a-z-]+(?:\.[A-Za-z-]+)?\/\d{7})(v\d+)?$/);
+            if (m) return { type: 'arxiv', value: m[1] };
+
+            // DOI: doi.org URLs, doi: prefix, bare 10.xxxx/yyyy
+            m = value.match(/(?:doi\.org\/|^doi:\s*)(10\.\d{4,9}\/\S+)$/i);
+            if (m) return { type: 'doi', value: m[1] };
+            m = value.match(/^(10\.\d{4,9}\/\S+)$/);
+            if (m) return { type: 'doi', value: m[1] };
+
+            return null;
+        }
+
+        // Resolve an arXiv id or DOI to an INSPIRE record id via the
+        // single-record API endpoints (api/arxiv/<id>, api/doi/<doi>)
+        async function resolveIdentifierToRecid(parsed) {
+            const endpoint = parsed.type === 'arxiv' ? 'arxiv' : 'doi';
+            const url = `https://inspirehep.net/api/${endpoint}/` +
+                (parsed.type === 'doi' ? encodeURI(parsed.value) : parsed.value) +
+                '?fields=control_number';
+            const response = await inspireFetch(url);
+            if (!response.ok) {
+                throw new Error(response.status === 404 ? 'record not found' : `HTTP ${response.status}`);
+            }
+            const data = await response.json();
+            const recid = parseInt((data.metadata && data.metadata.control_number) || data.id);
+            if (!recid) {
+                throw new Error('no record id in the API response');
+            }
+            return recid;
+        }
+
+        // --------------------------------
+        // INSPIRE API ACCESS
+        // --------------------------------
+        // INSPIRE enforces 15 requests per 5-second window. All API calls go
+        // through inspireFetch, which paces concurrent record loads through a
+        // shared rolling window and retries on 429/5xx with backoff.
+
+        const INSPIRE_RATE_WINDOW_MS = 5000;
+        const INSPIRE_RATE_MAX_REQUESTS = 12; // stay below the 15/5s limit
+        const inspireRequestTimes = [];
+
+        function sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+
+        // Wait for a free request slot in the rolling rate-limit window
+        async function inspireThrottle() {
+            for (;;) {
+                const now = Date.now();
+                while (inspireRequestTimes.length > 0 &&
+                       now - inspireRequestTimes[0] > INSPIRE_RATE_WINDOW_MS) {
+                    inspireRequestTimes.shift();
+                }
+                if (inspireRequestTimes.length < INSPIRE_RATE_MAX_REQUESTS) {
+                    inspireRequestTimes.push(now);
+                    return;
+                }
+                await sleep(inspireRequestTimes[0] + INSPIRE_RATE_WINDOW_MS - now + 50);
+            }
+        }
+
+        // Delay before retry attempt (0-based): honor a sane numeric
+        // Retry-After header, else exponential 2s/4s/8s/... capped at 30s
+        function computeBackoffDelayMs(attempt, retryAfterHeader) {
+            const retryAfter = parseInt(retryAfterHeader);
+            if (retryAfter > 0 && retryAfter <= 120) {
+                return retryAfter * 1000;
+            }
+            return Math.min(2000 * Math.pow(2, attempt), 30000);
+        }
+
+        // fetch() with rate-limit pacing and automatic retries on 429/5xx
+        // and network errors; other statuses are returned to the caller
+        async function inspireFetch(url, maxRetries = 4) {
+            for (let attempt = 0; ; attempt++) {
+                await inspireThrottle();
+                let response = null;
+                try {
+                    response = await fetch(url, {
+                        headers: { "Accept": "application/json" }
+                    });
+                } catch (networkError) {
+                    if (attempt >= maxRetries) throw networkError;
+                }
+                if (response) {
+                    const retryable = response.status === 429 || response.status >= 500;
+                    if (!retryable || attempt >= maxRetries) {
+                        return response;
+                    }
+                }
+                const delay = computeBackoffDelayMs(attempt,
+                    response ? response.headers.get('Retry-After') : null);
+                logDebug(`INSPIRE API ${response ? 'HTTP ' + response.status : 'network error'}, retrying in ${delay / 1000}s`);
+                await sleep(delay);
+            }
+        }
+
+        // --------------------------------
+        // CITATION CACHE
+        // --------------------------------
+        // Fetched citation records are cached in localStorage for a day:
+        // a fresh entry skips the API entirely, a stale one renders
+        // immediately and is refreshed in the background. All storage
+        // access degrades silently when localStorage is unavailable.
+
+        const CACHE_PREFIX = 'inspire-citation-cache-v3:'; // v3: issue dates (Jan 1 / 1st of month) treated as reduced precision
+        const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+        const CACHE_MAX_ENTRIES = 50;
+
+        function safeLocalStorage() {
+            try {
+                if (typeof localStorage === 'undefined' || !localStorage) return null;
+                const probe = CACHE_PREFIX + '__probe__';
+                localStorage.setItem(probe, '1');
+                localStorage.removeItem(probe);
+                return localStorage;
+            } catch (e) {
+                return null;
+            }
+        }
+
+        function cacheKeys(storage) {
+            const keys = [];
+            for (let i = 0; i < storage.length; i++) {
+                const key = storage.key(i);
+                if (key && key.indexOf(CACHE_PREFIX) === 0) keys.push(key);
+            }
+            return keys;
+        }
+
+        // Returns {record, fresh} or null; removes corrupt entries
+        function cacheLoad(storage, recid, nowMs) {
+            const key = CACHE_PREFIX + recid;
+            try {
+                const raw = storage.getItem(key);
+                if (!raw) return null;
+                const entry = JSON.parse(raw);
+                if (!entry || !entry.record || !Array.isArray(entry.record.citation_dates)) {
+                    storage.removeItem(key);
+                    return null;
+                }
+                const age = (nowMs || Date.now()) - (entry.savedAt || 0);
+                return { record: entry.record, fresh: age >= 0 && age < CACHE_TTL_MS };
+            } catch (e) {
+                try { storage.removeItem(key); } catch (e2) { /* ignore */ }
+                return null;
+            }
+        }
+
+        function cacheEvictOldest(storage, count) {
+            const entries = cacheKeys(storage).map(key => {
+                let savedAt = 0;
+                try { savedAt = (JSON.parse(storage.getItem(key)) || {}).savedAt || 0; } catch (e) { /* evict first */ }
+                return { key: key, savedAt: savedAt };
+            }).sort((a, b) => a.savedAt - b.savedAt);
+            for (let i = 0; i < Math.min(count, entries.length); i++) {
+                try { storage.removeItem(entries[i].key); } catch (e) { /* ignore */ }
+            }
+        }
+
+        function cacheSave(storage, recid, record, nowMs) {
+            const key = CACHE_PREFIX + recid;
+            const payload = JSON.stringify({ savedAt: nowMs || Date.now(), record: record });
+            for (let attempt = 0; attempt < 4; attempt++) {
+                try {
+                    storage.setItem(key, payload);
+                    break;
+                } catch (e) {
+                    // Quota exceeded: evict the oldest quarter and retry;
+                    // give up quietly if nothing can be evicted
+                    const before = cacheKeys(storage).length;
+                    cacheEvictOldest(storage, Math.max(1, Math.ceil(before / 4)));
+                    if (cacheKeys(storage).length === before) return;
+                }
+            }
+            const excess = cacheKeys(storage).length - CACHE_MAX_ENTRIES;
+            if (excess > 0) cacheEvictOldest(storage, excess);
+        }
+
+        // Remove cache entries left behind by older, incompatible cache versions
+        function cacheRemoveOldVersions(storage) {
+            const stale = [];
+            for (let i = 0; i < storage.length; i++) {
+                const key = storage.key(i);
+                if (key && key.indexOf('inspire-citation-cache-') === 0 && key.indexOf(CACHE_PREFIX) !== 0) {
+                    stale.push(key);
+                }
+            }
+            stale.forEach(key => {
+                try { storage.removeItem(key); } catch (e) { /* ignore */ }
+            });
+        }
+
+        // Cache-aware wrapper around citations_for_plot
+        const cacheRevalidating = new Set();
+
+        async function citations_for_plot_cached(recid, progressCallback) {
+            const storage = safeLocalStorage();
+            const cached = storage ? cacheLoad(storage, recid) : null;
+            if (cached) {
+                logDebug(`Cache ${cached.fresh ? 'hit' : 'hit (stale, refreshing)'} for recid ${recid}`);
+                if (progressCallback) {
+                    const n = cached.record.citation_dates.length;
+                    progressCallback(n, n);
+                }
+                if (!cached.fresh) {
+                    revalidateCachedRecord(recid);
+                }
+                return [cached.record];
+            }
+            const result = await citations_for_plot(recid, progressCallback);
+            if (result.length > 0 && storage) {
+                cacheSave(storage, recid, result[0]);
+            }
+            return result;
+        }
+
+        // Refetch a stale record in the background; update the cache, the
+        // chart, and the record tag if the paper is still on display
+        function revalidateCachedRecord(recid) {
+            if (cacheRevalidating.has(recid)) return;
+            cacheRevalidating.add(recid);
+            (async () => {
+                try {
+                    const result = await citations_for_plot(recid, null);
+                    if (result.length === 0) return;
+                    const storage = safeLocalStorage();
+                    if (storage) {
+                        cacheSave(storage, recid, result[0]);
+                    }
+                    if (recidData[recid] && recidData[recid].citation_record) {
+                        recidData[recid].citation_record = result[0];
+                        updateChart();
+                        const closeButton = document.querySelector(`.repo-tag .close[data-recid="${recid}"]`);
+                        if (closeButton && closeButton.parentElement) {
+                            closeButton.parentElement.innerHTML = `
+                                <span class="repo-tag-content" onclick="window.open('https://inspirehep.net/literature/${recid}', '_blank')">${result[0].refname || `recid:${recid}`}</span>
+                                <span class="close" data-recid="${recid}">×</span>
+                            `;
+                        }
+                    }
+                } catch (error) {
+                    console.error(`Background refresh failed for recid ${recid}:`, error);
+                } finally {
+                    cacheRevalidating.delete(recid);
+                }
+            })();
+        }
+
+        // --------------------------------
         // FETCHING CITATION DATES
         // --------------------------------
-        
-        // Helper function to get record information from INSPIRE-HEP API
+
+        // Helper function to get record information from INSPIRE-HEP API.
+        // Only the metadata fields used for the reference string are requested.
         async function get_recid_info(recid) {
             try {
-                const url = `https://inspirehep.net/api/literature/${recid}`;
-                const response = await fetch(url, {
-                    headers: { "Accept": "application/json" }
-                });
-                
+                const url = `https://inspirehep.net/api/literature/${recid}` +
+                    `?fields=titles,authors,publication_info,collaborations,arxiv_eprints,preprint_date`;
+                const response = await inspireFetch(url);
+
                 if (!response.ok) {
                     throw new Error(`Failed to fetch record info: ${response.statusText}`);
                 }
-                
+
                 return await response.json();
             } catch (error) {
                 console.error(`Error fetching data from INSPIRE-HEP API: ${error}`);
@@ -495,15 +849,16 @@
         // Get citations for a given record ID
         async function get_citations_by_recid(recid, size = 500, page = 1) {
             try {
-                const url = `https://inspirehep.net/api/literature?q=refersto:recid:${recid}&size=${size}&page=${page}`;
-                const response = await fetch(url, {
-                    headers: { "Accept": "application/json" }
-                });
-                
+                // Only the citation dates are needed downstream, so request
+                // just earliest_date: responses shrink by orders of magnitude
+                const url = `https://inspirehep.net/api/literature?q=refersto:recid:${recid}` +
+                    `&size=${size}&page=${page}&fields=earliest_date`;
+                const response = await inspireFetch(url);
+
                 if (!response.ok) {
                     throw new Error(`Failed to fetch citations: ${response.statusText}`);
                 }
-                
+
                 return await response.json();
             } catch (error) {
                 console.error(`Error fetching citations from INSPIRE-HEP API: ${error}`);
@@ -540,23 +895,69 @@
                     citation_info.date = created_date.substring(0, 10);
                 }
                 
-                // If the date has only year, add month and day
-                if (citation_info.date.length === 4) {
-                    citation_info.date = `${citation_info.date}-01-01`;
-                }
-                
+                // Dates that remain year-only (or month-only) are resolved by
+                // spreadImpreciseDates once all pages have been collected
+
                 citations.push(citation_info);
             }
             
             return citations;
         }
         
+        // Year-only and month-only citation dates (typical of conference
+        // proceedings volumes and theses) would otherwise pile up on Jan 1 or
+        // the 1st of the month and produce phantom rate spikes. Spread each
+        // such group deterministically (ordered by recid, so results are
+        // stable across reloads) across its year or month.
+        function spreadImpreciseDates(citations, nowMs) {
+            const cap = nowMs || Date.now();
+            const groups = new Map();
+            for (let i = 0; i < citations.length; i++) {
+                const d = citations[i].date || "";
+                // Publisher issue dates masquerade as full precision:
+                // Jan 1 (annual volumes) is really year precision, and the
+                // 1st of other months is really month precision
+                let key = null;
+                if (/^\d{4}$/.test(d) || /^\d{4}-\d{2}$/.test(d)) {
+                    key = d;
+                } else if (/^\d{4}-01-01$/.test(d)) {
+                    key = d.substring(0, 4);
+                } else if (/^\d{4}-\d{2}-01$/.test(d)) {
+                    key = d.substring(0, 7);
+                }
+                if (key !== null) {
+                    if (!groups.has(key)) groups.set(key, []);
+                    groups.get(key).push(i);
+                }
+            }
+            groups.forEach((idxs, key) => {
+                const year = parseInt(key.substring(0, 4));
+                const month = key.length === 7 ? parseInt(key.substring(5, 7)) - 1 : null;
+                const startMs = Date.UTC(year, month === null ? 0 : month, 1);
+                let endMs = month === null ?
+                    Date.UTC(year + 1, 0, 1) :
+                    Date.UTC(year, month + 1, 1);
+                // The current year/month has not fully elapsed: spread only up
+                // to the present, otherwise the future-placed dates would be
+                // clamped to "now" and pile up there
+                if (endMs > cap && cap > startMs) {
+                    endMs = cap;
+                }
+                idxs.sort((a, b) => (citations[a].recid || 0) - (citations[b].recid || 0));
+                for (let j = 0; j < idxs.length; j++) {
+                    const t = startMs + (endMs - startMs) * (j + 1) / (idxs.length + 1);
+                    citations[idxs[j]].date = new Date(t).toISOString().substring(0, 10);
+                }
+            });
+            return citations;
+        }
+
         // Get citation data for plotting
         async function citations_for_plot(recid, progressCallback) {
             try {
                 let allCitations = [];
                 let page = 1;
-                const pageSize = 250;
+                const pageSize = 500; // API maximum is 1000; slimmed responses make larger pages cheap
                 let totalRecords = 0;
                 let processedRecords = 0;
                 let hasMorePages = true;
@@ -598,14 +999,14 @@
                     }
                     
                     page++;
-                    
-                    // Small delay to avoid overwhelming the API
-                    await new Promise(resolve => setTimeout(resolve, 300));
                 }
                 
+                // Resolve imprecise (year/month-only) dates before use
+                spreadImpreciseDates(allCitations);
+
                 // Get record info for formatting
                 const recid_info = await get_recid_string(recid);
-                
+
                 // Extract dates from all citations
                 const dates_only = allCitations.map(citation => citation.date || "");
                 
@@ -637,7 +1038,7 @@
                 };
                 
                 // Get citation data directly from INSPIRE-HEP API
-                const result = await citations_for_plot(recid, progressCallback);
+                const result = await citations_for_plot_cached(recid, progressCallback);
                 
                 if (!result || result.length === 0) {
                     console.error(`No citation data returned for recid: ${recid}`);
@@ -670,7 +1071,7 @@
         async function fetchCitationDatesWithoutLoadingUI(recid, progressCallback) {
             try {
                 // Get citation data directly from INSPIRE-HEP API
-                const result = await citations_for_plot(recid, progressCallback);
+                const result = await citations_for_plot_cached(recid, progressCallback);
                 
                 if (!result || result.length === 0) {
                     console.error(`No citation data returned for recid: ${recid}`);
@@ -696,7 +1097,7 @@
             if (!res) {
                 return [];
             }
-            dates = res.citation_dates;
+            const dates = res.citation_dates;
             if (!dates || dates.length === 0) {
                 return [];
             }
@@ -734,11 +1135,9 @@
             
             for (let i = 0; i < dates.length; i++) {
                 var date = new Date(dates[i]);
-                if (date < currentDate) 
+                if (date < currentDate)
                     date = currentDate;
-                const year = date.getFullYear();
-                const month = date.getMonth();
-                
+
                 cumulativeCount++;
                 
                 if (cumulativeCount >= nextGoal) {
@@ -763,16 +1162,781 @@
         }
         
         // --------------------------------
+        // CITATION RATE ESTIMATION
+        // --------------------------------
+        // The citation stream is modeled as an inhomogeneous Poisson process.
+        // The rate is estimated as a piecewise-constant MLE (binned counts / bin width)
+        // with 68% central Poisson intervals per bin.
+
+        const MS_PER_MONTH = 1000 * 60 * 60 * 24 * 365.25 / 12;
+
+        // 68% central Poisson interval for a count n (may be fractional, for
+        // the smooth estimator's effective counts), via the Wilson-Hilferty
+        // approximation to the exact (Garwood) chi-squared interval.
+        function poissonInterval68(n) {
+            const z = 1.0; // 68.27% central interval
+            const lo = n <= 0 ? 0 :
+                Math.max(0, n * Math.pow(1 - 1 / (9 * n) - z / (3 * Math.sqrt(n)), 3));
+            const hi = (n + 1) * Math.pow(1 - 1 / (9 * (n + 1)) + z / (3 * Math.sqrt(n + 1)), 3);
+            return [lo, hi];
+        }
+
+        // Error function (Abramowitz & Stegun 7.1.26, |error| < 1.5e-7)
+        function erf(x) {
+            const sign = x < 0 ? -1 : 1;
+            const ax = Math.abs(x);
+            const t = 1 / (1 + 0.3275911 * ax);
+            const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t
+                - 0.284496736) * t + 0.254829592) * t * Math.exp(-ax * ax);
+            return sign * y;
+        }
+
+        function normCdf(x) {
+            return 0.5 * (1 + erf(x / Math.SQRT2));
+        }
+
+        // Publication date, months of history, and citation month-offsets
+        // (clamped to [0, spanMonths]); null if the record has no history yet.
+        function getCitationOffsets(record, nowMs) {
+            const pubDate = new Date(record.date);
+            const now = nowMs ? new Date(nowMs) : new Date();
+            const spanMonths = (now - pubDate) / MS_PER_MONTH;
+            if (!(spanMonths > 0)) return null;
+            const offsets = [];
+            for (const dateStr of (record.citation_dates || [])) {
+                const d = new Date(dateStr);
+                if (isNaN(d)) continue;
+                let m = (d - pubDate) / MS_PER_MONTH;
+                if (m < 0) m = 0;
+                if (m > spanMonths) m = spanMonths;
+                offsets.push(m);
+            }
+            return { pubDate: pubDate, spanMonths: spanMonths, offsets: offsets };
+        }
+
+        // x coordinate for a point midMonths after publication, per axis mode
+        function rateXValue(pubDate, midMonths, Mode) {
+            return Mode !== 0 ?
+                (Mode === 2 ? Number((midMonths / 12).toFixed(3)) : Number(midMonths.toFixed(2))) :
+                new Date(pubDate.getTime() + midMonths * MS_PER_MONTH);
+        }
+
+        // Pick a bin width (in average months): the finest of 1/2/3/6/12/24 months
+        // that keeps the plot readable (<= 100 bins) with >= 8 citations per bin
+        // on average, so relative errors stay below ~35%.
+        function chooseBinWidthMonths(nCitations, spanMonths) {
+            const candidates = [1, 2, 3, 6, 12, 24];
+            for (const c of candidates) {
+                const nBins = Math.max(1, Math.ceil(spanMonths / c));
+                if (nBins <= 100 && nCitations / nBins >= 8) {
+                    return c;
+                }
+            }
+            return candidates[candidates.length - 1];
+        }
+
+        // Bin citation dates into a piecewise-constant rate estimate.
+        // Returns points with x (Date in Mode 0, months since publication in
+        // Mode 1, years in Mode 2), y/lo/hi in citations per year, the bin
+        // count n, and a partial flag on the current (incomplete) bin.
+        function computeRateSeries(record, Mode, binMonthsOverride, nowMs) {
+            const base = getCitationOffsets(record, nowMs);
+            if (!base) {
+                return { points: [], binMonths: 1 };
+            }
+            const pubDate = base.pubDate;
+            const spanMonths = base.spanMonths;
+            const offsets = base.offsets;
+
+            const binMonths = binMonthsOverride > 0 ? binMonthsOverride :
+                chooseBinWidthMonths(offsets.length, spanMonths);
+            let nBins = Math.max(1, Math.ceil(spanMonths / binMonths));
+            // When the span is (nearly) an exact multiple of the bin width the
+            // final bin degenerates to a sliver of almost zero exposure, giving
+            // absurd 0 +- huge rates; fold it into the previous bin instead
+            if (nBins > 1 && spanMonths - (nBins - 1) * binMonths < 0.5 * binMonths) {
+                nBins--;
+            }
+            const counts = new Array(nBins).fill(0);
+            for (const m of offsets) {
+                let idx = Math.floor(m / binMonths);
+                if (idx >= nBins) idx = nBins - 1;
+                counts[idx]++;
+            }
+
+            const points = [];
+            for (let k = 0; k < nBins; k++) {
+                const start = k * binMonths;
+                const end = Math.min((k + 1) * binMonths, spanMonths);
+                const width = end - start; // last bin normalized by elapsed width
+                if (width <= 0) continue;
+                const mid = (start + end) / 2;
+                const n = counts[k];
+                const interval = poissonInterval68(n);
+                // width is in months; displayed unit is citations per year
+                points.push({
+                    x: rateXValue(pubDate, mid, Mode),
+                    y: 12 * n / width,
+                    lo: 12 * interval[0] / width,
+                    hi: 12 * interval[1] / width,
+                    n: n,
+                    w: Math.round(width * 100) / 100, // last bin can be wider (sliver fold)
+                    partial: k === nBins - 1 // current bin: still filling + indexing lag
+                });
+            }
+            return { points: points, binMonths: binMonths };
+        }
+
+        // Smooth rate estimate: Gaussian-kernel intensity estimator with
+        // cut-and-normalize boundary correction,
+        //   lambda(t) = sum_i K_h(t - t_i) / m(t),   m(t) = int_0^T K_h(t - u) du.
+        // For a Poisson process Var(lambda) = lambda * int K^2 / m^2 (Campbell's
+        // theorem), i.e. lambda behaves like a Poisson count over an effective
+        // exposure E0(t) = m(t)^2 / int_0^T K_h(t-u)^2 du months. The band maps
+        // n_eff = lambda * E0 through the same 68% Poisson interval as the bins,
+        // which stays positive and asymmetric at low rates and widens by ~sqrt(2)
+        // at the window edges.
+        function computeSmoothRateSeries(record, Mode, fwhmOverride, nowMs) {
+            const base = getCitationOffsets(record, nowMs);
+            if (!base) {
+                return { points: [], widthMonths: 6 };
+            }
+            const pubDate = base.pubDate;
+            const T = base.spanMonths;
+            const offsets = base.offsets;
+
+            // Smoothing scale expressed as a FWHM, comparable to a bin width;
+            // auto: twice the auto bin width, at least half a year.
+            const autoBin = chooseBinWidthMonths(offsets.length, T);
+            const fwhm = fwhmOverride > 0 ? fwhmOverride : Math.max(2 * autoBin, 6);
+            const h = fwhm / 2.3548; // Gaussian sigma in months
+
+            const nGrid = Math.max(120, Math.min(400, Math.ceil((T / h) * 4)));
+            const norm = 1 / (h * Math.sqrt(2 * Math.PI));
+            const points = [];
+            for (let g = 0; g <= nGrid; g++) {
+                const t = T * g / nGrid;
+                const mass = normCdf((T - t) / h) - normCdf(-t / h);
+                if (mass <= 1e-12) continue;
+                const kernelSqInt = (normCdf(Math.SQRT2 * (T - t) / h) - normCdf(-Math.SQRT2 * t / h)) /
+                    (2 * h * Math.sqrt(Math.PI));
+                let sum = 0;
+                for (const m of offsets) {
+                    const u = (t - m) / h;
+                    if (u < -6 || u > 6) continue;
+                    sum += norm * Math.exp(-0.5 * u * u);
+                }
+                const rate = sum / mass; // per month internally
+                const exposure = mass * mass / kernelSqInt; // effective months
+                const nEff = rate * exposure;
+                const interval = poissonInterval68(nEff);
+                // displayed unit is citations per year
+                points.push({
+                    x: rateXValue(pubDate, t, Mode),
+                    y: 12 * rate,
+                    lo: 12 * interval[0] / exposure,
+                    hi: 12 * interval[1] / exposure,
+                    n: Math.round(nEff * 10) / 10,
+                    partial: t > T - h, // within one sigma of now: indexing lag
+                    smooth: true
+                });
+            }
+            return { points: points, widthMonths: fwhm };
+        }
+
+        const BLOCKS_P0 = 0.05; // false-alarm probability per change point
+        const BLOCKS_MIN_WIDTH_MONTHS = 1; // change-point resolution floor:
+        // prevents hairline blocks (e.g. the announcement burst plus citations
+        // clamped to t=0) whose tiny exposure produces absurd rates
+        const BLOCKS_TAIL_MONTHS = 1; // provisional (dashed) tail near the present
+
+        // Bayesian Blocks (Scargle et al. 2013, ApJ 764, 167): globally optimal
+        // piecewise-constant segmentation of event times via dynamic programming,
+        // with the event-data fitness N ln(N/T) and the eq. 21 prior calibrated
+        // to the false-alarm probability p0. offsets: ascending months within
+        // [0, T]. Returns the block edges [0, ..., T] in months.
+        function bayesianBlocksEdges(offsets, T, p0) {
+            if (!(T > 0)) return [0, Math.max(T || 0, 0)];
+            const N = offsets.length;
+            if (N === 0) return [0, T];
+
+            // Merge tied times (day resolution makes ties common) into
+            // weighted ticks
+            let ticks = [];
+            let weights = [];
+            for (const t of offsets) {
+                if (ticks.length > 0 && t <= ticks[ticks.length - 1] + 1e-9) {
+                    weights[weights.length - 1] += 1;
+                } else {
+                    ticks.push(t);
+                    weights.push(1);
+                }
+            }
+            // Quantize to a weekly grid: bounds the O(M^2) DP below and is far
+            // below the one-month change-point resolution anyway
+            {
+                const WEEK_MONTHS = 7 * 12 / 365.25;
+                const merged = new Map();
+                for (let j = 0; j < ticks.length; j++) {
+                    const g = Math.round(ticks[j] / WEEK_MONTHS) * WEEK_MONTHS;
+                    merged.set(g, (merged.get(g) || 0) + weights[j]);
+                }
+                ticks = Array.from(merged.keys()).sort((a, b) => a - b);
+                weights = ticks.map(t => merged.get(t));
+            }
+            const M = ticks.length;
+
+            // Cell edges: observation start, midpoints between ticks, and end
+            const edges = new Array(M + 1);
+            edges[0] = 0;
+            for (let j = 1; j < M; j++) {
+                edges[j] = (ticks[j - 1] + ticks[j]) / 2;
+            }
+            edges[M] = T;
+
+            const cumw = new Array(M + 1).fill(0);
+            for (let j = 0; j < M; j++) cumw[j + 1] = cumw[j] + weights[j];
+
+            const ncpPrior = 4 - Math.log(73.53 * p0 * Math.pow(N, -0.478));
+
+            const best = new Array(M).fill(0);
+            const lastStart = new Array(M).fill(0);
+            for (let q = 0; q < M; q++) {
+                let bestVal = -Infinity;
+                let bestR = 0;
+                for (let r = 0; r <= q; r++) {
+                    const nk = cumw[q + 1] - cumw[r];
+                    const tk = edges[q + 1] - edges[r];
+                    if (!(tk > 0)) continue;
+                    // Enforce the minimum block width inside the DP (prefixes
+                    // that cannot be partitioned stay at -Infinity and are
+                    // never selected); a span shorter than the minimum still
+                    // yields the single whole-span block via the backtrack
+                    if (tk < BLOCKS_MIN_WIDTH_MONTHS) continue;
+                    const val = nk * (Math.log(nk) - Math.log(tk)) - ncpPrior +
+                        (r > 0 ? best[r - 1] : 0);
+                    if (val > bestVal) {
+                        bestVal = val;
+                        bestR = r;
+                    }
+                }
+                best[q] = bestVal;
+                lastStart[q] = bestR;
+            }
+
+            // Backtrack the optimal change points
+            const starts = [];
+            let q = M - 1;
+            for (;;) {
+                const r = lastStart[q];
+                starts.push(r);
+                if (r === 0) break;
+                q = r - 1;
+            }
+            starts.reverse();
+            const blockEdges = starts.map(r => edges[r]);
+            blockEdges.push(T);
+            return blockEdges;
+        }
+
+        // Rate series from Bayesian Blocks. Steps are drawn with short
+        // symmetric ramps around each change point (a fixed small fraction of
+        // the span, so a few pixels at any zoom) which the chart renders with
+        // rounded corners; the true change-point date is kept in trueX on the
+        // first point of each block for the CSV export. Points with dup are
+        // continuation points of the same block.
+        function computeBlocksRateSeries(record, Mode, p0, nowMs) {
+            const base = getCitationOffsets(record, nowMs);
+            if (!base) {
+                return { points: [], widthMonths: '' };
+            }
+            const pubDate = base.pubDate;
+            const T = base.spanMonths;
+            const offsets = base.offsets.slice().sort((a, b) => a - b);
+
+            const edges = bayesianBlocksEdges(offsets, T, p0 || BLOCKS_P0);
+
+            // Per-block statistics
+            const blocks = [];
+            let idx = 0;
+            for (let k = 0; k + 1 < edges.length; k++) {
+                const start = edges[k];
+                const end = edges[k + 1];
+                const width = end - start;
+                if (!(width > 0)) continue;
+                const isLast = (k + 2 === edges.length);
+                let n = 0;
+                while (idx < offsets.length && (isLast || offsets[idx] < end)) {
+                    n++;
+                    idx++;
+                }
+                const interval = poissonInterval68(n);
+                blocks.push({
+                    start: start, end: end, width: width, n: n,
+                    y: 12 * n / width,
+                    lo: 12 * interval[0] / width,
+                    hi: 12 * interval[1] / width
+                });
+            }
+
+            const ramp = Math.min(3, Math.max(0.25, 0.008 * T));
+            const points = [];
+            for (let k = 0; k < blocks.length; k++) {
+                const b = blocks[k];
+                const isLast = (k === blocks.length - 1);
+                const dL = k === 0 ? 0 :
+                    Math.min(ramp, 0.45 * blocks[k - 1].width, 0.45 * b.width);
+                const dR = isLast ? 0 :
+                    Math.min(ramp, 0.45 * b.width, 0.45 * blocks[k + 1].width);
+                const common = {
+                    y: b.y, lo: b.lo, hi: b.hi, n: b.n,
+                    w: Math.round(b.width * 100) / 100
+                };
+                // Only the last ~month before the present is provisional
+                // (indexing lag): confine the dashed tail to it
+                const wholeTail = isLast && b.width <= BLOCKS_TAIL_MONTHS;
+                points.push(Object.assign({
+                    x: rateXValue(pubDate, b.start + dL, Mode),
+                    trueX: rateXValue(pubDate, b.start, Mode),
+                    partial: wholeTail
+                }, common));
+                if (!isLast) {
+                    points.push(Object.assign({
+                        x: rateXValue(pubDate, b.end - dR, Mode),
+                        dup: true, partial: false
+                    }, common));
+                } else if (wholeTail) {
+                    points.push(Object.assign({
+                        x: rateXValue(pubDate, b.end, Mode),
+                        dup: true, partial: true
+                    }, common));
+                } else {
+                    const tailStart = Math.max(b.end - BLOCKS_TAIL_MONTHS, b.start + dL + 0.05);
+                    points.push(Object.assign({
+                        x: rateXValue(pubDate, tailStart, Mode),
+                        dup: true, partial: false
+                    }, common));
+                    points.push(Object.assign({
+                        x: rateXValue(pubDate, b.end, Mode),
+                        dup: true, partial: true
+                    }, common));
+                }
+            }
+            return { points: points, widthMonths: '' };
+        }
+
+        // --- Wang-Song-Barabasi model fit (Science 342, 127 (2013)) ---
+        // Citation rate lambda * P(t; mu, sigma) * (m + c(t)) with log-normal
+        // aging P and preferential attachment; closed form
+        //   c(t) = m * (exp(lambda * Phi((ln t - mu)/sigma)) - 1),
+        // giving the ultimate impact c(inf) = m * (exp(lambda) - 1).
+        // Fitted by maximum likelihood of the point process: lambda has a
+        // closed-form profile MLE, (mu, sigma) via grid + Nelder-Mead.
+        const WSB_M = 30;
+        const WSB_MIN_MONTHS = 60;  // extrapolation is unreliable for young papers
+        const WSB_MIN_CITATIONS = 50;
+        const WSB_BOOTSTRAP = 40;
+        // Projection requires this fraction of the fitted aging mass to be
+        // observed: below it, the (lambda, mu) degeneracy lets still-rising
+        // histories masquerade as nearly-elapsed ones with wrong c(inf)
+        const WSB_MIN_PHI = 0.85;
+
+        // Inverse standard normal CDF (Acklam's rational approximation)
+        function normInv(p) {
+            if (!(p > 0 && p < 1)) return p <= 0 ? -Infinity : Infinity;
+            const a = [-3.969683028665376e+01, 2.209460984245205e+02, -2.759285104469687e+02,
+                1.383577518672690e+02, -3.066479806614716e+01, 2.506628277459239e+00];
+            const b = [-5.447609879822406e+01, 1.615858368580409e+02, -1.556989798598866e+02,
+                6.680131188771972e+01, -1.328068155288572e+01];
+            const c = [-7.784894002430293e-03, -3.223964580411365e-01, -2.400758277161838e+00,
+                -2.549732539343734e+00, 4.374664141464968e+00, 2.938163982698783e+00];
+            const d = [7.784695709041462e-03, 3.224671290700398e-01, 2.445134137142996e+00,
+                3.754408661907416e+00];
+            const pl = 0.02425;
+            let q, r;
+            if (p < pl) {
+                q = Math.sqrt(-2 * Math.log(p));
+                return (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) /
+                    ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1);
+            }
+            if (p > 1 - pl) {
+                q = Math.sqrt(-2 * Math.log(1 - p));
+                return -(((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) /
+                    ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1);
+            }
+            q = p - 0.5;
+            r = q * q;
+            return (((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q /
+                (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1);
+        }
+
+        // Profile log-likelihood over (mu, sigma); lambda profiled out in
+        // closed form: lambda_hat = N / A with
+        //   A = sum_{i=0..N} (m + i) * (Phi(x_{i+1}) - Phi(x_i)),
+        // x_i at the event times (x_0 -> -inf, x_{N+1} at the observation end)
+        function wsbProfile(logTs, logT, mu, sigma) {
+            const N = logTs.length;
+            if (sigma < 0.05 || sigma > 4) return { ll: -Infinity, lambda: 0 };
+            let A = 0;
+            let prevPhi = 0;
+            let sumSq = 0;
+            for (let i = 0; i < N; i++) {
+                const x = (logTs[i] - mu) / sigma;
+                const phi = normCdf(x);
+                A += (WSB_M + i) * Math.max(phi - prevPhi, 0);
+                prevPhi = phi;
+                sumSq += x * x;
+            }
+            A += (WSB_M + N) * Math.max(normCdf((logT - mu) / sigma) - prevPhi, 0);
+            if (!(A > 1e-12)) return { ll: -Infinity, lambda: 0 };
+            const lambda = N / A;
+            // ln P(t_i) = -x_i^2/2 - ln(sqrt(2 pi)) - ln sigma - ln t_i;
+            // the sum of ln t_i is parameter-independent and dropped
+            const ll = N * Math.log(lambda) - sumSq / 2 - N * Math.log(sigma) - N;
+            return { ll: ll, lambda: lambda };
+        }
+
+        // Nelder-Mead minimization in 2D
+        function nelderMead2(f, x0, step, iters) {
+            let simplex = [
+                x0,
+                [x0[0] + step[0], x0[1]],
+                [x0[0], x0[1] + step[1]]
+            ].map(p => ({ p: p, v: f(p) }));
+            const mid = (u, v, w1, w2) => [u[0] * w1 + v[0] * w2, u[1] * w1 + v[1] * w2];
+            for (let it = 0; it < iters; it++) {
+                simplex.sort((a, b) => a.v - b.v);
+                const best = simplex[0], second = simplex[1], worst = simplex[2];
+                const cx = mid(best.p, second.p, 0.5, 0.5);
+                const refl = mid(cx, worst.p, 2, -1);
+                const vr = f(refl);
+                if (vr < best.v) {
+                    const expd = mid(cx, worst.p, 3, -2);
+                    const ve = f(expd);
+                    simplex[2] = ve < vr ? { p: expd, v: ve } : { p: refl, v: vr };
+                } else if (vr < second.v) {
+                    simplex[2] = { p: refl, v: vr };
+                } else {
+                    const con = mid(cx, worst.p, 0.5, 0.5);
+                    const vc = f(con);
+                    if (vc < worst.v) {
+                        simplex[2] = { p: con, v: vc };
+                    } else {
+                        simplex[1] = { p: mid(best.p, second.p, 0.5, 0.5), v: f(mid(best.p, second.p, 0.5, 0.5)) };
+                        simplex[2] = { p: mid(best.p, worst.p, 0.5, 0.5), v: f(mid(best.p, worst.p, 0.5, 0.5)) };
+                    }
+                }
+            }
+            simplex.sort((a, b) => a.v - b.v);
+            return simplex[0].p;
+        }
+
+        // Core fit without maturity guards (used by the bootstrap refits)
+        function wsbFitCore(offsetsMonths, T, muStart, sigmaStart) {
+            const ts = offsetsMonths.map(t => Math.max(t, 0.1)).sort((a, b) => a - b);
+            const logTs = ts.map(t => Math.log(t));
+            const logT = Math.log(Math.max(T, 0.2));
+            const evalAt = p => {
+                const r = wsbProfile(logTs, logT, p[0], p[1]);
+                return -r.ll;
+            };
+            let start;
+            if (muStart !== undefined) {
+                start = [muStart, sigmaStart];
+            } else {
+                // Coarse grid over immediacy and longevity
+                let bestV = Infinity;
+                start = [Math.log(T / 4), 1];
+                for (let gi = 0; gi < 30; gi++) {
+                    const mu = Math.log(0.5) + (Math.log(2 * T) - Math.log(0.5)) * gi / 29;
+                    for (let gj = 0; gj < 20; gj++) {
+                        const sigma = 0.15 + (2.5 - 0.15) * gj / 19;
+                        const v = evalAt([mu, sigma]);
+                        if (v < bestV) { bestV = v; start = [mu, sigma]; }
+                    }
+                }
+            }
+            const opt = nelderMead2(evalAt, start, [0.2, 0.1], 120);
+            const prof = wsbProfile(logTs, logT, opt[0], opt[1]);
+            if (!(prof.ll > -Infinity)) return { ok: false, reason: 'fit failed' };
+            return {
+                ok: true,
+                lambda: prof.lambda,
+                mu: opt[0],
+                sigma: opt[1],
+                cinf: WSB_M * Math.expm1(prof.lambda),
+                ll: prof.ll
+            };
+        }
+
+        // Simulate the fitted process up to age T months (time rescaling:
+        // between events, lambda*(m+i)*dPhi is a unit-rate exponential)
+        function wsbSimulate(lambda, mu, sigma, T, cap) {
+            const phiEnd = normCdf((Math.log(T) - mu) / sigma);
+            const times = [];
+            let phi = 0;
+            for (;;) {
+                const i = times.length;
+                phi += -Math.log(1 - Math.random()) / (lambda * (WSB_M + i));
+                if (phi >= phiEnd || phi >= 1) break;
+                times.push(Math.exp(mu + sigma * normInv(phi)));
+                if (times.length >= cap) return { ok: false, times: times };
+            }
+            return { ok: true, times: times };
+        }
+
+        // Parametric bootstrap 68% interval on the ultimate impact
+        function wsbBootstrap(fit, T, B) {
+            const cinfs = [];
+            let divergent = 0;
+            for (let b = 0; b < B; b++) {
+                const sim = wsbSimulate(fit.lambda, fit.mu, fit.sigma, T, 20000);
+                if (!sim.ok || sim.times.length < 10) { divergent++; continue; }
+                const refit = wsbFitCore(sim.times, T, fit.mu, fit.sigma);
+                if (!refit.ok) { divergent++; continue; }
+                cinfs.push(Math.min(refit.cinf, 1e7));
+            }
+            if (cinfs.length < B * 0.5) return { ok: false };
+            cinfs.sort((a, b) => a - b);
+            const q = f => cinfs[Math.min(cinfs.length - 1, Math.max(0, Math.round(f * (cinfs.length - 1))))];
+            return { ok: true, lo: q(0.16), hi: q(0.84), unstable: divergent > B * 0.3 };
+        }
+
+        // Full fit with maturity guards and bootstrap. The ultimate-impact
+        // projection is only marked reliable when the fitted aging curve has
+        // passed its peak within the observed window (Wang-Mei-Hicks: before
+        // the turnover, "still rising" and "rises forever" cannot be told
+        // apart and c(inf) diverges), lambda is finite territory, and the
+        // bootstrap interval is informative. The in-sample curve stays usable
+        // either way.
+        function wsbFit(offsetsMonths, T) {
+            if (offsetsMonths.length < WSB_MIN_CITATIONS) {
+                return { ok: false, reason: 'needs at least ' + WSB_MIN_CITATIONS + ' citations' };
+            }
+            if (T < WSB_MIN_MONTHS) {
+                return { ok: false, reason: 'needs at least ' + Math.round(WSB_MIN_MONTHS / 12) + ' years of history' };
+            }
+            const fit = wsbFitCore(offsetsMonths, T);
+            if (!fit.ok) return fit;
+            fit.phiT = normCdf((Math.log(T) - fit.mu) / fit.sigma);
+            let reliable = fit.phiT >= WSB_MIN_PHI && fit.lambda <= 10;
+            if (!reliable) {
+                fit.why = fit.lambda > 10 ? 'fit diverged' : 'no aging turnover in the data yet';
+            } else {
+                const boot = wsbBootstrap(fit, T, WSB_BOOTSTRAP);
+                if (boot.ok && boot.hi <= 4 * Math.max(boot.lo, 1)) {
+                    fit.lo = boot.lo;
+                    fit.hi = boot.hi;
+                    fit.unstable = boot.unstable;
+                } else {
+                    reliable = false;
+                    fit.why = 'bootstrap unstable';
+                }
+            }
+            fit.reliable = reliable;
+            return fit;
+        }
+
+        // Model cumulative curve: c(t) = m (e^(lambda Phi((ln t - mu)/sigma)) - 1)
+        function wsbCumulativeCurve(fit, T, nPoints) {
+            const points = [];
+            const n = nPoints || 60;
+            for (let g = 1; g <= n; g++) {
+                const t = T * g / n;
+                if (t < 0.1) continue;
+                const c = WSB_M * Math.expm1(fit.lambda * normCdf((Math.log(t) - fit.mu) / fit.sigma));
+                points.push({ t: t, y: Math.round(c) }); // integers keep tooltips clean
+            }
+            return points;
+        }
+
+        // Model rate curve in citations/year: rate(t) = lambda P(t) m e^(lambda Phi)
+        function wsbRateCurve(fit, T, nPoints) {
+            const points = [];
+            const n = nPoints || 150;
+            for (let g = 1; g <= n; g++) {
+                const t = T * g / n;
+                if (t < 0.1) continue;
+                const x = (Math.log(t) - fit.mu) / fit.sigma;
+                const pdf = Math.exp(-x * x / 2) / (Math.sqrt(2 * Math.PI) * fit.sigma * t);
+                const rate = fit.lambda * pdf * WSB_M * Math.exp(fit.lambda * normCdf(x));
+                points.push({ t: t, y: 12 * rate });
+            }
+            return points;
+        }
+
+        function formatCitationCount(v) {
+            if (!(v >= 0)) return '?';
+            if (v < 1000) return String(Math.round(v));
+            if (v < 100000) return (v / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
+            if (v < 1e6) return Math.round(v / 1000) + 'k';
+            if (v < 1e8) return (v / 1e6).toFixed(1).replace(/\.0$/, '') + 'M';
+            return '>100M';
+        }
+
+        // Value and uncertainty in one unit with matching precision,
+        // e.g. 842 ± 95, (1.6 ± 0.3)k, (2.5 ± 0.4)M
+        function formatCountWithError(value, err) {
+            if (!(value >= 0) || value >= 1e8) return formatCitationCount(value);
+            let unit = 1;
+            let suffix = '';
+            if (value >= 1e6) { unit = 1e6; suffix = 'M'; }
+            else if (value >= 1000) { unit = 1000; suffix = 'k'; }
+            if (!suffix) return Math.round(value) + ' ± ' + Math.round(err);
+            const digits = value / unit < 100 ? 1 : 0;
+            return '(' + (value / unit).toFixed(digits) + ' ± ' + (err / unit).toFixed(digits) + ')' + suffix;
+        }
+
+        function hexToRgba(hex, alpha) {
+            const r = parseInt(hex.slice(1, 3), 16);
+            const g = parseInt(hex.slice(3, 5), 16);
+            const b = parseInt(hex.slice(5, 7), 16);
+            return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+        }
+
+        // Corner-pair representation of the binned estimate for plotting:
+        // each bin becomes two points at its edges, inset slightly so the
+        // monotone interpolation draws softly rounded steps (same idea as
+        // the Bayesian-blocks view). trueX keeps the bin center for
+        // tooltips; the CSV export uses the original center points.
+        function binnedToCorners(points, Mode) {
+            const toX = (p, dMonths) => Mode === 0 ?
+                new Date(p.x.getTime() + dMonths * MS_PER_MONTH) :
+                (Mode === 2 ? p.x + dMonths / 12 : p.x + dMonths);
+            const corners = [];
+            const nPts = points.length;
+            points.forEach((p, k) => {
+                const w = p.w !== undefined ? p.w : 0;
+                const half = w / 2;
+                const ramp = Math.min(1.5, Math.max(0.25, 0.15 * w));
+                const insetL = k === 0 ? 0 : Math.min(ramp, 0.45 * w);
+                const insetR = k === nPts - 1 ? 0 : Math.min(ramp, 0.45 * w);
+                const common = { y: p.y, lo: p.lo, hi: p.hi, n: p.n, w: p.w,
+                    partial: p.partial, trueX: p.x };
+                corners.push(Object.assign({ x: toX(p, -half + insetL) }, common));
+                corners.push(Object.assign({ x: toX(p, half - insetR), dup: true }, common));
+            });
+            return corners;
+        }
+
+        // Text lines for the label next to a curve's latest point:
+        // "value ± error", plus the projected total for a reliable model fit
+        function presentRateLines(point, fit) {
+            const err = (point.hi - point.lo) / 2;
+            const dec = point.y < 10 ? 1 : 0;
+            const lines = [point.y.toFixed(dec) + ' ± ' + err.toFixed(dec)];
+            if (fit && fit.ok && fit.reliable) {
+                lines.push('total ' + formatCountWithError(fit.cinf, (fit.hi - fit.lo) / 2) +
+                    (fit.unstable ? '?' : ''));
+            }
+            return lines;
+        }
+
+        // Terse tooltip value: "12.3 ± 1.5", split into +up -down only when
+        // the interval is clearly asymmetric
+        function rateTooltipText(p) {
+            const up = p.hi - p.y;
+            const dn = p.y - p.lo;
+            if (!(up > 0 || dn > 0)) return p.y.toFixed(1);
+            if (Math.abs(up - dn) < 0.15 * Math.max(up, dn)) {
+                return p.y.toFixed(1) + ' ± ' + ((up + dn) / 2).toFixed(1);
+            }
+            return p.y.toFixed(1) + ' +' + up.toFixed(1) + ' -' + dn.toFixed(1);
+        }
+
+        // One line per paper under the chart stating the model-fit outcome in
+        // words (projection with uncertainty, or why none is given)
+        function renderFitSummary(entries) {
+            const el = document.getElementById('fit-summary');
+            if (!entries || entries.length === 0) {
+                el.style.display = 'none';
+                el.innerHTML = '';
+                return;
+            }
+            el.innerHTML = entries.map(e =>
+                `<span class="fit-summary-item"><span class="color-dot" style="background:${e.color}"></span>${e.text}</span>`
+            ).join('');
+            el.style.display = 'block';
+        }
+
+        // chart.xkcd has no option to exclude datasets from its legend, so
+        // helper rows are removed after rendering. The legend is a nested
+        // <svg> holding a background layer (one rect) and a text layer with,
+        // per dataset, an 8x8 swatch rect immediately followed by its
+        // <text>, rows 20px apart. Surviving rows are re-packed and the
+        // background box resized. Fails silently if the structure is not as
+        // expected.
+        function pruneFitLegendRows(svgEl, labels) {
+            try {
+                if (!labels.length) return;
+                const isSwatch = el => el && el.tagName === 'rect' &&
+                    parseFloat(el.getAttribute('width')) < 25;
+                // The swatch+text pattern also matches chart.xkcd's (hidden)
+                // tooltip items, so locate the legend layer from a row that
+                // actually matches one of the doomed labels
+                const texts = Array.from(svgEl.querySelectorAll('text'));
+                const rows = texts.filter(t => isSwatch(t.previousElementSibling));
+                if (rows.length === 0) return;
+                let textLayer = null;
+                let removed = 0;
+                rows.forEach(t => {
+                    if (!labels.includes(t.textContent)) return;
+                    textLayer = t.parentNode;
+                    t.previousElementSibling.remove();
+                    t.remove();
+                    removed++;
+                });
+                if (removed === 0 || !textLayer) return;
+                // Re-pack the surviving rows (chart.xkcd puts row i at y = 17 + 20i)
+                Array.from(textLayer.querySelectorAll('text')).forEach((t, j) => {
+                    if (isSwatch(t.previousElementSibling)) {
+                        t.previousElementSibling.setAttribute('y', String(17 + 20 * j));
+                    }
+                    t.setAttribute('y', String(17 + 20 * j + 8));
+                });
+                // Shrink the background box, kept in a sibling layer
+                const bgLayer = textLayer.previousElementSibling;
+                const bg = bgLayer && bgLayer.querySelector ? bgLayer.querySelector('rect') : null;
+                if (bg) {
+                    bg.setAttribute('height',
+                        Math.max(20, parseFloat(bg.getAttribute('height')) - 20 * removed));
+                    if (typeof textLayer.getBBox === 'function') {
+                        const w = textLayer.getBBox().width;
+                        if (w > 0) bg.setAttribute('width', String(Math.ceil(w) + 15));
+                    }
+                }
+            } catch (e) {
+                console.error('Legend pruning failed:', e);
+            }
+        }
+
+        // --------------------------------
         // CHART UPDATING
         // --------------------------------
         function updateChart() {
             const alignTimeline = document.getElementById('align-timeline').checked;
+            const showRate = document.getElementById('show-rate').checked;
             const chartContainer = document.getElementById('chart');
-            
-            // Clear previous chart
+
+            // Show the rate controls only in rate view; the width selector acts
+            // as smoothing scale (FWHM) in smooth mode and bin width in binned
+            // mode, and is irrelevant for Bayesian blocks
+            const estimatorChoice = document.getElementById('rate-estimator').value;
+            document.getElementById('estimator-group').style.display = showRate ? 'flex' : 'none';
+            document.getElementById('bin-width-group').style.display =
+                showRate && estimatorChoice !== 'blocks' ? 'flex' : 'none';
+            document.getElementById('p0-group').style.display =
+                showRate && estimatorChoice === 'blocks' ? 'flex' : 'none';
+            document.getElementById('wsb-group').style.display = 'flex'; // both views
+            document.getElementById('bin-width-label').textContent =
+                estimatorChoice === 'smooth' ? 'Smoothing:' : 'Bin width:';
+
+            // Clear the previous chart (both views render into the same svg)
             while (chartContainer.firstChild) {
                 chartContainer.removeChild(chartContainer.firstChild);
             }
+            rateData = null;
+            renderFitSummary([]);
 
             if (Object.keys(recidData).length === 0) return;
 
@@ -789,14 +1953,19 @@
                         continue;
                     }
                     
-                    datepubl = new Date(data.citation_record.date);
-                    last_citation = new Date(data.citation_record.citation_dates[data.citation_record.citation_dates.length - 1]);
+                    const datepubl = new Date(data.citation_record.date);
+                    const last_citation = new Date(data.citation_record.citation_dates[data.citation_record.citation_dates.length - 1]);
                     logDebug(last_citation, datepubl);
                     if (last_citation.getFullYear() - datepubl.getFullYear() > 5) {
                         Mode = 2;
                         break;
                     }
                 }
+            }
+
+            if (showRate) {
+                renderRateChart(Mode);
+                return;
             }
 
             // Process data for all records
@@ -815,31 +1984,61 @@
                 });
             });
 
-            // Create the final data structure
-            // Store in the global chartData variable for export functionality
+            // Assemble the chart data (the CSV export recomputes from the
+            // raw citation dates, so no labels are needed here)
             chartData = {
                 datasets: allDataPoints.map((dataset) => ({
                     label: dataset.label,
                     data: dataset.points.map(point => ({ x: point.x, y: point.y }))
                 })),
-                labels: [] // Will be populated with unique dates for CSV export
+                labels: []
             };
-            
-            // Extract all unique dates for CSV export
-            const allDates = new Set();
-            chartData.datasets.forEach(dataset => {
-                dataset.data.forEach(point => {
-                    allDates.add(point.x);
+
+            // Optional WSB model overlay on the cumulative view: the fitted
+            // c(t) as a lighter line in the paper's color, with the projected
+            // ultimate count in its legend label when the fit is reliable
+            const cumulativeColors = chartData.datasets.map((d, i) => COLORS[i % COLORS.length]);
+            const cumulativeFitLabels = [];
+            const fitEntries = [];
+            if (document.getElementById('wsb-fit').checked) {
+                let colorIndex = 0;
+                Object.entries(recidData).forEach(([recid, data]) => {
+                    const record = data.citation_record;
+                    if (!record || !record.refname) return;
+                    const color = COLORS[colorIndex % COLORS.length];
+                    colorIndex++;
+                    if (!record.date) return;
+                    const base = getCitationOffsets(record);
+                    if (!base) return;
+                    const key = recid + ':' + base.offsets.length + ':' + Math.round(base.spanMonths);
+                    let fit = wsbCache.get(key);
+                    if (!fit) {
+                        fit = wsbFit(base.offsets, base.spanMonths);
+                        wsbCache.set(key, fit);
+                    }
+                    if (!fit.ok) {
+                        fitEntries.push({ color: color, text: 'model fit: ' + fit.reason });
+                        return;
+                    }
+                    const curve = wsbCumulativeCurve(fit, base.spanMonths);
+                    const label = fit.reliable ?
+                        'projected total ' + formatCountWithError(fit.cinf, (fit.hi - fit.lo) / 2) :
+                        'fit (no projection)';
+                    fitEntries.push({
+                        color: color,
+                        text: fit.reliable ?
+                            label + (fit.unstable ? '?' : '') :
+                            'no projection — ' + (fit.why || 'unreliable fit')
+                    });
+                    chartData.datasets.push({
+                        label: label,
+                        data: curve.map(p => ({ x: rateXValue(base.pubDate, p.t, Mode), y: p.y }))
+                    });
+                    cumulativeColors.push(hexToRgba(color, 0.45));
+                    cumulativeFitLabels.push(label);
                 });
-            });
-            
-            // Sort dates chronologically
-            chartData.labels = Array.from(allDates).sort((a, b) => {
-                if (typeof a === 'object' && a instanceof Date && typeof b === 'object' && b instanceof Date) {
-                    return a - b;
-                }
-                return a - b; // For numeric values (when using timeline mode)
-            });
+            }
+            renderFitSummary(fitEntries);
 
             try {
                 const config = {
@@ -853,7 +2052,7 @@
                         legendPosition: chartXkcd.config.positionType.upLeft,
                         showLine: true,
                         dotSize: 0.5,
-                        dataColors: COLORS,
+                        dataColors: cumulativeColors,
                         margin: { left: 120, right: 60, top: 60, bottom: 50 },
                         strokeWidth: 2.5,
                         // fontFamily: 'Comic Sans MS',
@@ -870,68 +2069,465 @@
                     }
                 };
 
-                // chart = new chartXkcd.Line(chartContainer, config);
+                // chart.xkcd sizes the svg itself (parent width x 2/3), which
+                // matches the container's 3:2 aspect ratio
                 chart = new chartXkcd.XY(chartContainer, config);
+                pruneFitLegendRows(chartContainer, cumulativeFitLabels);
             } catch (error) {
                 console.error('Error creating chart:', error);
                 console.error('Chart data:', JSON.stringify(chartData, null, 2));
                 alert('Error creating chart: ' + error.message);
             }
 
-            // Create custom legend in the top-left corner of the chart
-            // const legendContainer = document.getElementById('legend-container');
-            // legendContainer.innerHTML = '';
-            // legendContainer.style.position = 'absolute';
-            // legendContainer.style.top = '10px';
-            // legendContainer.style.left = '10px';
-            // legendContainer.style.padding = '5px';
-            // legendContainer.style.backgroundColor = 'rgba(255, 255, 255, 0.8)';
-            // legendContainer.style.borderRadius = '4px';
-            // legendContainer.style.fontFamily = 'Comic Sans MS';
-            
-            chartData.datasets.forEach((dataset, index) => {
-                const legendItem = document.createElement('div');
-                legendItem.className = 'legend-item';
-                
-                const colorBox = document.createElement('div');
-                colorBox.className = 'color-box';
-                colorBox.style.backgroundColor = COLORS[index % COLORS.length];
-                
-                const label = document.createElement('span');
-                label.textContent = dataset.label;
-                
-                legendItem.appendChild(colorBox);
-                legendItem.appendChild(label);
-                // legendContainer.appendChild(legendItem);
-            });
         }
-        
+
+        // Render the citation-rate view with chart.xkcd, so it shares the
+        // cumulative view's style exactly (comic look, sizing, legend,
+        // tooltips). chart.xkcd draws every dataset the same way - a solid
+        // monotone line with dots and a legend row - so the extras this view
+        // needs (shaded 68% bands, dashed provisional tails, dashed model
+        // curves, present-rate labels, error bars in tooltips) are applied to
+        // the rendered SVG afterwards by decorateRateChart, and the helper
+        // datasets' legend rows are pruned.
+        function renderRateChart(Mode) {
+            const chartContainer = document.getElementById('chart');
+            const binOverride = parseInt(document.getElementById('bin-width').value) || 0;
+            const estimator = document.getElementById('rate-estimator').value;
+            const blocksP0 = parseFloat(document.getElementById('blocks-p0').value) || BLOCKS_P0;
+            const wsbOn = document.getElementById('wsb-fit').checked;
+
+            // Per-paper plotting plan: central curve split into a solid part
+            // and a provisional (dashed) tail, band edges, optional model fit
+            const papers = [];
+            const fitEntries = [];
+            rateData = [];
+            let colorIndex = 0;
+            Object.entries(recidData).forEach(([recid, data]) => {
+                const record = data.citation_record;
+                if (!record || !record.refname || !record.date) {
+                    console.error(`Missing or invalid citation_record for recid ${recid}`);
+                    return;
+                }
+
+                const series = estimator === 'smooth' ?
+                    computeSmoothRateSeries(record, Mode, binOverride) :
+                    (estimator === 'blocks' ?
+                        computeBlocksRateSeries(record, Mode, blocksP0) :
+                        computeRateSeries(record, Mode, binOverride));
+                if (series.points.length === 0) return;
+
+                const color = COLORS[colorIndex % COLORS.length];
+                colorIndex++;
+                rateData.push({
+                    recid: recid,
+                    label: record.refname,
+                    estimator: estimator,
+                    widthMonths: estimator === 'binned' ? series.binMonths : series.widthMonths,
+                    points: series.points
+                });
+
+                const plotPts = estimator === 'binned' ?
+                    binnedToCorners(series.points, Mode) : series.points;
+                let tailFrom = plotPts.length;
+                for (let i = 0; i < plotPts.length; i++) {
+                    if (plotPts[i].partial) { tailFrom = i; break; }
+                }
+                const paper = {
+                    label: record.refname,
+                    color: color,
+                    main: plotPts.slice(0, Math.max(tailFrom, 1)),
+                    tail: tailFrom < plotPts.length ? plotPts.slice(Math.max(tailFrom - 1, 0)) : [],
+                    band: plotPts,
+                    last: series.points[series.points.length - 1],
+                    wsb: null,
+                    fit: null
+                };
+
+                // Optional WSB model overlay: dashed fitted rate curve, with
+                // the verdict spelled out under the chart
+                if (wsbOn) {
+                    const base = getCitationOffsets(record);
+                    if (base) {
+                        const key = recid + ':' + base.offsets.length + ':' + Math.round(base.spanMonths);
+                        let fit = wsbCache.get(key);
+                        if (!fit) {
+                            fit = wsbFit(base.offsets, base.spanMonths);
+                            wsbCache.set(key, fit);
+                        }
+                        paper.fit = fit;
+                        if (!fit.ok) {
+                            fitEntries.push({ color: color, text: 'model fit: ' + fit.reason });
+                        } else if (fit.reliable) {
+                            fitEntries.push({
+                                color: color,
+                                text: 'projected total ' + formatCountWithError(fit.cinf, (fit.hi - fit.lo) / 2) +
+                                    (fit.unstable ? '?' : '')
+                            });
+                        } else {
+                            fitEntries.push({ color: color, text: 'no projection — ' + (fit.why || 'unreliable fit') });
+                        }
+                        if (fit.ok) {
+                            const curve = wsbRateCurve(fit, base.spanMonths);
+                            paper.wsb = curve.map(p => ({ x: rateXValue(base.pubDate, p.t, Mode), y: p.y }));
+                        }
+                    }
+                }
+                papers.push(paper);
+            });
+
+            renderFitSummary(fitEntries);
+            if (papers.length === 0) return;
+
+            // Datasets: the papers' central curves first, so the legend lists
+            // exactly them; helper datasets follow and their legend rows are
+            // pruned after rendering. plan is index-aligned with datasets and
+            // drives the post-render decoration.
+            const datasets = [];
+            const dataColors = [];
+            const helperLabels = [];
+            const plan = [];
+            const xy = p => ({ x: p.x, y: p.y });
+            papers.forEach(paper => {
+                datasets.push({ label: paper.label, data: paper.main.map(xy) });
+                dataColors.push(paper.color);
+                plan.push({ kind: 'main', paper: paper });
+            });
+            papers.forEach(paper => {
+                if (paper.tail.length > 1) {
+                    datasets.push({ label: 'now (provisional)', data: paper.tail.map(xy) });
+                    dataColors.push(paper.color);
+                    helperLabels.push('now (provisional)');
+                    plan.push({ kind: 'tail', paper: paper });
+                }
+                datasets.push({ label: 'upper 68%', data: paper.band.map(p => ({ x: p.x, y: p.hi })) });
+                dataColors.push(hexToRgba(paper.color, 0.5));
+                helperLabels.push('upper 68%');
+                plan.push({ kind: 'hi', paper: paper });
+                datasets.push({ label: 'lower 68%', data: paper.band.map(p => ({ x: p.x, y: p.lo })) });
+                dataColors.push(hexToRgba(paper.color, 0.5));
+                helperLabels.push('lower 68%');
+                plan.push({ kind: 'lo', paper: paper });
+                if (paper.wsb) {
+                    datasets.push({ label: 'model fit', data: paper.wsb });
+                    dataColors.push(hexToRgba(paper.color, 0.45));
+                    helperLabels.push('model fit');
+                    plan.push({ kind: 'wsb', paper: paper });
+                }
+            });
+
+            // Anchor the y-axis at zero with an invisible point (chart.xkcd
+            // otherwise starts the y-scale at the data minimum). The
+            // x-domain is left alone: the curves run all the way to the
+            // plot's right edge, and the present-rate labels hang in the
+            // margin beyond it (the svg overflows visibly into the
+            // container's whitespace).
+            let xMax = -Infinity;
+            datasets.forEach(ds => ds.data.forEach(q => {
+                const v = Mode === 0 ? q.x.getTime() : q.x;
+                if (v > xMax) xMax = v;
+            }));
+            datasets.push({ label: '', data: [{ x: Mode === 0 ? new Date(xMax) : xMax, y: 0 }] });
+            dataColors.push('rgba(0,0,0,0)');
+            helperLabels.push('');
+            plan.push({ kind: 'pad' });
+
+            try {
+                const config = {
+                    title: 'Citation Rate',
+                    xLabel: Mode !== 0 ? (Mode === 2 ? 'Timeline (Years)' : 'Timeline (Months)') : 'Date',
+                    yLabel: 'Citations per year',
+                    data: { datasets: datasets },
+                    options: {
+                        xTickCount: 5,
+                        yTickCount: 5,
+                        legendPosition: chartXkcd.config.positionType.upLeft,
+                        showLine: true,
+                        // Invisible dots: the estimate is a curve, not events.
+                        // The zero-radius circles still carry every point's
+                        // rendered position, which decorateRateChart uses for
+                        // the labels and the hover tooltip.
+                        dotSize: 0,
+                        dataColors: dataColors,
+                        timeFormat: Mode !== 0 ? '' : 'MMM D, YYYY'
+                    }
+                };
+
+                chart = new chartXkcd.XY(chartContainer, config);
+                pruneFitLegendRows(chartContainer, helperLabels);
+                decorateRateChart(chartContainer, plan, Mode);
+            } catch (error) {
+                console.error('Error creating rate chart:', error);
+                alert('Error creating chart: ' + error.message);
+            }
+        }
+
+        // Post-render SVG adjustments for the rate view. plan is
+        // index-aligned with the rendered datasets (chart.xkcd draws one
+        // path.xkcd-chart-xyline and one dot group per dataset, in order).
+        // Fails silently: the chart stays readable without decorations.
+        function decorateRateChart(svgSource, plan, Mode) {
+            // chart.xkcd's fixed layout (title, xLabel and yLabel all set)
+            const M = { top: 60, right: 30, bottom: 50, left: 70 };
+            const NS = 'http://www.w3.org/2000/svg';
+            try {
+                // Swap the svg for a clone of itself: this drops chart.xkcd's
+                // per-dot tooltip handlers (its tooltips cannot show the
+                // error bars); replacements are attached below.
+                const svg = svgSource.cloneNode(true);
+                svgSource.parentNode.replaceChild(svg, svgSource);
+
+                const lines = Array.from(svg.querySelectorAll('path.xkcd-chart-xyline'));
+                if (lines.length !== plan.length) return;
+                const groups = {};
+                Array.from(svg.querySelectorAll('g[xy-group-index]')).forEach(g => {
+                    groups[Number(g.getAttribute('xy-group-index'))] = g;
+                });
+                const graphG = lines[0].parentNode;
+                const filterAttr = lines[0].getAttribute('filter');
+                const innerW = (parseFloat(svg.getAttribute('width')) || 0) - M.left - M.right;
+                const innerH = (parseFloat(svg.getAttribute('height')) || 0) - M.top - M.bottom;
+
+                // Shaded 68% bands: filled polygons between each pair of band
+                // edge paths, sampled along their length, under the curves
+                const sample = (p, nSteps) => {
+                    const total = p.getTotalLength();
+                    const pts = [];
+                    for (let i = 0; i <= nSteps; i++) {
+                        const q = p.getPointAtLength(total * i / nSteps);
+                        pts.push(q.x.toFixed(1) + ',' + q.y.toFixed(1));
+                    }
+                    return pts;
+                };
+                plan.forEach((d, i) => {
+                    if (d.kind !== 'hi') return;
+                    const j = plan.findIndex(e => e.kind === 'lo' && e.paper === d.paper);
+                    if (j < 0) return;
+                    const fill = document.createElementNS(NS, 'path');
+                    fill.setAttribute('class', 'rate-band-fill');
+                    fill.setAttribute('d', 'M' + sample(lines[i], 64).concat(sample(lines[j], 64).reverse()).join('L') + 'Z');
+                    fill.setAttribute('fill', hexToRgba(d.paper.color, 0.16));
+                    fill.setAttribute('stroke', 'none');
+                    if (filterAttr) fill.setAttribute('filter', filterAttr);
+                    graphG.insertBefore(fill, lines[0]);
+                });
+
+                // Anchor data for the labels and the hover tooltip, read
+                // from the dot positions before the dot groups are removed
+                // (with dotSize 0 the circles are invisible but still carry
+                // the rendered coordinates of every point)
+                const hoverPts = [];
+                const annos = [];
+                plan.forEach((d, i) => {
+                    if (d.kind !== 'main' && d.kind !== 'tail') return;
+                    const grp = groups[i];
+                    const circles = grp ? grp.querySelectorAll('circle') : [];
+                    for (let k = 0; k < circles.length; k++) {
+                        const p = d.kind === 'main' ? d.paper.main[k] : d.paper.tail[k];
+                        if (!p) continue;
+                        hoverPts.push({
+                            x: parseFloat(circles[k].getAttribute('cx')),
+                            y: parseFloat(circles[k].getAttribute('cy')),
+                            p: p,
+                            paper: d.paper
+                        });
+                    }
+                    if (d.kind !== 'main' || circles.length === 0) return;
+                    const tailIdx = plan.findIndex(e => e.kind === 'tail' && e.paper === d.paper);
+                    const endGrp = (tailIdx >= 0 && groups[tailIdx]) ? groups[tailIdx] : grp;
+                    const endCircles = endGrp.querySelectorAll('circle');
+                    const lastDot = endCircles[endCircles.length - 1];
+                    if (!lastDot) return;
+                    annos.push({
+                        x: parseFloat(lastDot.getAttribute('cx')) + 8,
+                        y: parseFloat(lastDot.getAttribute('cy')),
+                        color: d.paper.color,
+                        lines: presentRateLines(d.paper.last, d.paper.fit)
+                    });
+                });
+
+                // Per-dataset styling: hide the band edges and the padding
+                // point, dash the provisional tails and the model curves;
+                // the dot groups go entirely (the estimate is a curve)
+                plan.forEach((d, i) => {
+                    const path = lines[i];
+                    if (d.kind === 'hi' || d.kind === 'lo' || d.kind === 'pad') {
+                        path.setAttribute('display', 'none');
+                    } else if (d.kind === 'wsb') {
+                        path.setAttribute('stroke-dasharray', '10,6');
+                        path.setAttribute('stroke-width', '2');
+                    } else if (d.kind === 'tail') {
+                        path.setAttribute('stroke-dasharray', '7,7');
+                    }
+                    if (groups[i]) groups[i].remove();
+                });
+
+                // Present-rate labels right of each curve's endpoint, in the
+                // margin outside the plot, pushed apart when papers end
+                // close together
+                const rowH = 14;
+                annos.sort((a, b) => a.y - b.y);
+                annos.forEach(a => {
+                    // keep labels inside the plot and clear of the x-axis line
+                    a.y = Math.min(Math.max(a.y, 10), innerH - rowH * (a.lines.length - 1) - 10);
+                });
+                for (let i = 1; i < annos.length; i++) {
+                    const minGap = rowH * annos[i - 1].lines.length + 2;
+                    if (annos[i].y - annos[i - 1].y < minGap) {
+                        annos[i].y = annos[i - 1].y + minGap;
+                    }
+                }
+                annos.forEach(a => {
+                    a.lines.forEach((textLine, li) => {
+                        const t = document.createElementNS(NS, 'text');
+                        t.setAttribute('class', 'rate-now-label');
+                        t.setAttribute('x', a.x.toFixed(1));
+                        t.setAttribute('y', (a.y + li * rowH + 4).toFixed(1));
+                        t.setAttribute('fill', a.color);
+                        t.setAttribute('font-size', '12');
+                        t.textContent = textLine;
+                        graphG.appendChild(t);
+                    });
+                });
+
+                // Tooltip in chart.xkcd's own style (rounded sketchy box,
+                // bold title, colored swatch), carrying the 68% error
+                const tip = document.createElementNS(NS, 'svg');
+                tip.setAttribute('class', 'rate-tooltip');
+                tip.style.visibility = 'hidden';
+                const tipBg = document.createElementNS(NS, 'rect');
+                tipBg.setAttribute('fill', 'white');
+                tipBg.setAttribute('fill-opacity', '0.9');
+                tipBg.setAttribute('stroke', 'black');
+                tipBg.setAttribute('stroke-width', '2');
+                tipBg.setAttribute('rx', '5');
+                tipBg.setAttribute('ry', '5');
+                tipBg.setAttribute('x', '5');
+                tipBg.setAttribute('y', '5');
+                if (filterAttr) tipBg.setAttribute('filter', filterAttr);
+                const tipTitle = document.createElementNS(NS, 'text');
+                tipTitle.setAttribute('x', '15');
+                tipTitle.setAttribute('y', '25');
+                tipTitle.style.fontSize = '15px';
+                tipTitle.style.fontWeight = 'bold';
+                const tipSwatch = document.createElementNS(NS, 'rect');
+                tipSwatch.setAttribute('width', '8');
+                tipSwatch.setAttribute('height', '8');
+                tipSwatch.setAttribute('rx', '2');
+                tipSwatch.setAttribute('ry', '2');
+                tipSwatch.setAttribute('x', '15');
+                tipSwatch.setAttribute('y', '37');
+                const tipText = document.createElementNS(NS, 'text');
+                tipText.setAttribute('x', '27');
+                tipText.setAttribute('y', '45');
+                tipText.style.fontSize = '15px';
+                tip.appendChild(tipBg);
+                tip.appendChild(tipTitle);
+                tip.appendChild(tipSwatch);
+                tip.appendChild(tipText);
+                svg.appendChild(tip);
+
+                const fmtX = (p) => {
+                    const x = p.trueX !== undefined ? p.trueX : p.x;
+                    if (Mode === 0) {
+                        return (x instanceof Date ? x : new Date(x)).toLocaleDateString('en-US',
+                            { month: 'short', day: 'numeric', year: 'numeric' });
+                    }
+                    return (Math.round(x * 10) / 10) + (Mode === 2 ? ' yr' : ' mo');
+                };
+
+                // Nearest-point hover: the tooltip and a small highlight dot
+                // follow the mouse along the central curves
+                const marker = document.createElementNS(NS, 'circle');
+                marker.setAttribute('class', 'rate-hover-marker');
+                marker.setAttribute('r', '3.5');
+                marker.setAttribute('display', 'none');
+                graphG.appendChild(marker);
+                const hideHover = () => {
+                    marker.setAttribute('display', 'none');
+                    tip.style.visibility = 'hidden';
+                };
+                svg.addEventListener('mousemove', (ev) => {
+                    const box = svg.getBoundingClientRect();
+                    if (!box.width) return;
+                    const scale = (parseFloat(svg.getAttribute('width')) || box.width) / box.width;
+                    const mx = (ev.clientX - box.left) * scale - M.left;
+                    const my = (ev.clientY - box.top) * scale - M.top;
+                    let best = null;
+                    let bestD2 = 20 * 20; // activation radius in svg px
+                    for (const q of hoverPts) {
+                        const d2 = (q.x - mx) * (q.x - mx) + (q.y - my) * (q.y - my);
+                        if (d2 < bestD2) { bestD2 = d2; best = q; }
+                    }
+                    if (!best) {
+                        hideHover();
+                        return;
+                    }
+                    marker.setAttribute('cx', best.x);
+                    marker.setAttribute('cy', best.y);
+                    marker.setAttribute('fill', best.paper.color);
+                    marker.setAttribute('display', 'block');
+                    tipTitle.textContent = fmtX(best.p);
+                    tipSwatch.style.fill = best.paper.color;
+                    tipText.textContent = best.paper.label + ': ' + rateTooltipText(best.p);
+                    let w = 180;
+                    try {
+                        w = Math.max(tipTitle.getBBox().width, tipText.getBBox().width + 12) + 20;
+                    } catch (e) { /* getBBox needs layout; keep the fallback */ }
+                    tipBg.setAttribute('width', w.toFixed(0));
+                    tipBg.setAttribute('height', '50');
+                    let tx = best.x + M.left + 5;
+                    let ty = best.y + M.top + 5;
+                    if (best.x > innerW / 2) tx -= w + 20;
+                    if (best.y > innerH / 2) ty -= 70;
+                    tip.setAttribute('x', tx.toFixed(0));
+                    tip.setAttribute('y', ty.toFixed(0));
+                    tip.style.visibility = 'visible';
+                });
+                svg.addEventListener('mouseleave', hideHover);
+            } catch (e) {
+                console.error('Rate chart decoration failed:', e);
+            }
+        }
+
         // --------------------------------
         // ADD / REMOVE RECID
         // --------------------------------
         async function addRecid() {
             const recidInput = document.getElementById('recid-input');
-            let recidValue = recidInput.value.trim();
-            
-            // Extract recid from URL if it's a URL
-            if (recidValue.includes('inspirehep.net/literature/')) {
-                const match = recidValue.match(/\/literature\/(\d+)/);
-                if (match && match[1]) {
-                    recidValue = match[1];
-                }
-            }
-            
-            // Check if it's a valid number
-            if (!recidValue || !/^\d+$/.test(recidValue)) {
-                alert('Please enter a valid INSPIRE-HEP recid number');
+            const rawValue = recidInput.value.trim();
+            const loadingElement = document.getElementById('loading');
+
+            const parsed = parseRecordIdentifier(rawValue);
+            if (!parsed) {
+                alert('Please enter a valid INSPIRE record id, arXiv id, or DOI');
                 return;
             }
-            
-            const recid = parseInt(recidValue);
-            
+
+            let recid;
+            if (parsed.type === 'recid') {
+                recid = parseInt(parsed.value);
+            } else {
+                // Resolve arXiv/DOI to an INSPIRE record id first
+                loadingElement.textContent =
+                    `Resolving ${parsed.type === 'arxiv' ? 'arXiv:' : 'DOI '}${parsed.value}...`;
+                loadingElement.style.display = 'block';
+                disableButtons();
+                try {
+                    recid = await resolveIdentifierToRecid(parsed);
+                } catch (error) {
+                    alert(`Could not resolve "${rawValue}" on INSPIRE: ${error.message}`);
+                    loadingElement.style.display = 'none';
+                    enableButtons();
+                    return;
+                }
+                loadingElement.textContent = 'Loading citation data...';
+            }
+
             // Check if this recid is already in the list
             if (recidData[recid]) {
                 alert('This record is already in the list');
+                loadingElement.style.display = 'none';
+                enableButtons();
                 return;
             }
             
@@ -1041,6 +2637,26 @@
             updateChart();
             updateUrl();
         });
+        document.getElementById('show-rate').addEventListener('change', function() {
+            updateChart();
+            updateUrl();
+        });
+        document.getElementById('rate-estimator').addEventListener('change', function() {
+            updateChart();
+            updateUrl();
+        });
+        document.getElementById('blocks-p0').addEventListener('change', function() {
+            updateChart();
+            updateUrl();
+        });
+        document.getElementById('wsb-fit').addEventListener('change', function() {
+            updateChart();
+            updateUrl();
+        });
+        document.getElementById('bin-width').addEventListener('change', function() {
+            updateChart();
+            updateUrl();
+        });
         
         // Export button event listeners
         document.getElementById('save-image').addEventListener('click', saveChartAsImage);
@@ -1064,6 +2680,34 @@
             if (alignParam !== null) {
                 const alignCheckbox = document.getElementById('align-timeline');
                 alignCheckbox.checked = alignParam.toLowerCase() === 'true';
+            }
+
+            // Handle the rate-view parameters
+            const rateParam = urlParams.get('rate');
+            if (rateParam !== null) {
+                document.getElementById('show-rate').checked = rateParam.toLowerCase() === 'true';
+            }
+            const binParam = parseInt(urlParams.get('bin'));
+            if ([1, 3, 6, 12].includes(binParam)) {
+                document.getElementById('bin-width').value = String(binParam);
+            }
+            const estParam = urlParams.get('est');
+            if (['smooth', 'binned', 'blocks'].includes(estParam)) {
+                document.getElementById('rate-estimator').value = estParam;
+            } else {
+                // Legacy parameter from before the estimator selector
+                const smoothParam = urlParams.get('smooth');
+                if (smoothParam !== null && smoothParam.toLowerCase() === 'false') {
+                    document.getElementById('rate-estimator').value = 'binned';
+                }
+            }
+            const p0Param = urlParams.get('p0');
+            if (['0.05', '0.3', '0.9'].includes(p0Param)) {
+                document.getElementById('blocks-p0').value = p0Param;
+            }
+            const wsbParam = urlParams.get('wsb');
+            if (wsbParam !== null) {
+                document.getElementById('wsb-fit').checked = wsbParam.toLowerCase() === 'true';
             }
             
             if (recidsParam) {
@@ -1262,6 +2906,8 @@
         
         // Initialize the app
         document.addEventListener('DOMContentLoaded', function() {
+            const storage = safeLocalStorage();
+            if (storage) cacheRemoveOldVersions(storage);
             // Parse URL parameters when the page loads
             parseUrlParams();
         });
@@ -1299,18 +2945,33 @@
         // Function to save chart as image
         function saveChartAsImage() {
             const svgElement = document.getElementById('chart');
-            
+            const svgRect = svgElement.getBoundingClientRect();
+
+            // The rate view's present-rate labels overhang the svg's right
+            // edge (visible via overflow); widen the exported copy so the
+            // rasterized image keeps them
+            let exportW = svgRect.width;
+            try {
+                svgElement.querySelectorAll('text.rate-now-label').forEach(t => {
+                    exportW = Math.max(exportW, t.getBoundingClientRect().right - svgRect.left + 8);
+                });
+            } catch (e) { /* no labels or no layout: keep the svg width */ }
+
             // Create a canvas element with higher resolution
             const canvas = document.createElement('canvas');
-            const svgRect = svgElement.getBoundingClientRect();
             const scaleFactor = 2; // Increase resolution by 2x
-            
-            canvas.width = svgRect.width * scaleFactor;
+
+            canvas.width = exportW * scaleFactor;
             canvas.height = svgRect.height * scaleFactor;
             const ctx = canvas.getContext('2d');
-            
-            // Create an image from the SVG
-            const svgData = new XMLSerializer().serializeToString(svgElement);
+
+            // Create an image from a copy sized to the full export width
+            // (the inline width:100% style must not shrink it back)
+            const exportSvg = svgElement.cloneNode(true);
+            exportSvg.setAttribute('width', exportW);
+            exportSvg.style.width = exportW + 'px';
+            exportSvg.style.height = svgRect.height + 'px';
+            const svgData = new XMLSerializer().serializeToString(exportSvg);
             const img = new Image();
             const svgBlob = new Blob([svgData], {type: 'image/svg+xml;charset=utf-8'});
             const url = URL.createObjectURL(svgBlob);
@@ -1326,7 +2987,8 @@
                 // Convert canvas to blob and download
                 canvas.toBlob(function(blob) {
                     const link = document.createElement('a');
-                    link.download = 'citation-history.png';
+                    link.download = document.getElementById('show-rate').checked ?
+                        'citation-rate.png' : 'citation-history.png';
                     link.href = URL.createObjectURL(blob);
                     link.click();
                     URL.revokeObjectURL(link.href);
@@ -1336,11 +2998,58 @@
             img.src = url;
         }
         
+        // Export the binned rate series (long format: one row per paper per bin)
+        function exportRateCSV() {
+            const escapeCSV = (text) => {
+                let value = String(text);
+                if (value.includes(',') || value.includes('"') || value.includes('\n')) {
+                    value = '"' + value.replace(/"/g, '""') + '"';
+                }
+                return value;
+            };
+
+            // N is the bin count for the binned estimator and the effective
+            // count n_eff for the smooth one; WidthMonths is the bin width or
+            // the smoothing FWHM respectively.
+            let csvContent = 'Paper,Estimator,WidthMonths,X,CitationsPerYear,ErrLow68,ErrHigh68,N,Provisional\n';
+            rateData.forEach(series => {
+                series.points.forEach(p => {
+                    if (p.dup) return; // block end-points duplicate the start rows
+                    const xRaw = p.trueX !== undefined ? p.trueX : p.x;
+                    const xValue = xRaw instanceof Date ? xRaw.toISOString().split('T')[0] : xRaw;
+                    csvContent += [
+                        escapeCSV(series.label),
+                        series.estimator,
+                        p.w !== undefined ? p.w : series.widthMonths,
+                        xValue,
+                        p.y.toFixed(4),
+                        p.lo.toFixed(4),
+                        p.hi.toFixed(4),
+                        p.n,
+                        p.partial ? 'yes' : 'no'
+                    ].join(',') + '\n';
+                });
+            });
+
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = 'citation-rate.csv';
+            link.click();
+            URL.revokeObjectURL(link.href);
+        }
+
         // Function to export data to CSV
         function exportDataToCSV() {
             // Get the data directly from recidData which contains all citation information
             if (Object.keys(recidData).length === 0) {
                 alert('No data to export');
+                return;
+            }
+
+            // Rate view exports the binned rate series instead
+            if (document.getElementById('show-rate').checked && rateData && rateData.length > 0) {
+                exportRateCSV();
                 return;
             }
             
