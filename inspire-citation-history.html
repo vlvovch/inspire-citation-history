@@ -74,17 +74,19 @@
             cursor: not-allowed;
             opacity: 0.7;
         }
+        /* chart.xkcd sizes its svg to parent width x 2/3 on its own, so the
+           shared container uses that native 3:2 aspect and the rate view
+           fills the same box */
         .chart-container {
             position: relative;
             width: 70%;
-            aspect-ratio: 2 / 1;
+            aspect-ratio: 3 / 2;
             margin: auto auto;
             background: white;
         }
         @media (max-width: 900px) {
             .chart-container {
                 width: 95%;
-                aspect-ratio: 3 / 2;
             }
         }
         .fit-summary {
@@ -1804,28 +1806,40 @@
                 const texts = Array.from(svgEl.querySelectorAll('text'));
                 const doomed = texts.filter(t => labels.includes(t.textContent));
                 if (doomed.length === 0) return;
-                const parent = doomed[0].parentNode;
-                const rows = texts.filter(t => t.parentNode === parent);
+                // chart.xkcd appends the legend as: background rect, then per
+                // dataset a small swatch rect immediately followed by its text.
+                // Rely on that DOM order instead of pixel geometry.
+                const isSwatch = el => el && el.tagName === 'rect' &&
+                    parseFloat(el.getAttribute('width')) < 25;
+                const legendTexts = texts.filter(t => isSwatch(t.previousElementSibling));
                 let rowH = 20;
-                if (rows.length >= 2) {
-                    const ys = rows.map(t => parseFloat(t.getAttribute('y'))).sort((a, b) => a - b);
+                if (legendTexts.length >= 2) {
+                    const ys = legendTexts.map(t => parseFloat(t.getAttribute('y'))).sort((a, b) => a - b);
                     rowH = (ys[1] - ys[0]) || 20;
                 }
-                doomed.forEach(t => {
-                    const ty = parseFloat(t.getAttribute('y'));
-                    Array.from(parent.querySelectorAll('rect')).forEach(r => {
-                        const ry = parseFloat(r.getAttribute('y'));
-                        const rw = parseFloat(r.getAttribute('width'));
-                        if (rw < 25 && ry < ty && ty - ry < rowH - 2) r.remove();
-                    });
-                    t.remove();
-                });
-                Array.from(parent.querySelectorAll('rect')).forEach(r => {
-                    if (parseFloat(r.getAttribute('width')) > 80) {
-                        r.setAttribute('height',
-                            parseFloat(r.getAttribute('height')) - rowH * doomed.length);
+                // The legend background is the last big rect before the first swatch
+                let bg = null;
+                if (legendTexts.length > 0) {
+                    let node = legendTexts[0].previousElementSibling; // first swatch
+                    while (node) {
+                        if (node.tagName === 'rect' && parseFloat(node.getAttribute('width')) > 80) {
+                            bg = node;
+                            break;
+                        }
+                        node = node.previousElementSibling;
                     }
+                }
+                let removed = 0;
+                doomed.forEach(t => {
+                    if (!isSwatch(t.previousElementSibling)) return; // not a legend row
+                    t.previousElementSibling.remove();
+                    t.remove();
+                    removed++;
                 });
+                if (bg && removed > 0) {
+                    bg.setAttribute('height',
+                        Math.max(rowH, parseFloat(bg.getAttribute('height')) - rowH * removed));
+                }
             } catch (e) {
                 console.error('Legend pruning failed:', e);
             }
@@ -1997,14 +2011,8 @@
                     }
                 };
 
-                // Match the rate view's plot box: size the SVG to the
-                // fixed-aspect container before chart.xkcd reads it
-                const box = chartContainer.parentElement.getBoundingClientRect();
-                if (box.width > 0) {
-                    chartContainer.setAttribute('width', Math.round(box.width));
-                    chartContainer.setAttribute('height', Math.round(box.height));
-                }
-
+                // chart.xkcd sizes the svg itself (parent width x 2/3), which
+                // matches the container's 3:2 aspect ratio
                 chart = new chartXkcd.XY(chartContainer, config);
                 pruneFitLegendRows(chartContainer, cumulativeFitLabels);
             } catch (error) {

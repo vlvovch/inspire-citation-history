@@ -45,6 +45,10 @@ Chart.defaults = { font: {} };
 window.chartXkcd = {
     XY: class { constructor(el, cfg) {
         (window.__xkcdConfigs = window.__xkcdConfigs || []).push(cfg);
+        // mimic the real library: it sizes the svg itself to parent width x 2/3
+        var pw = el.parentElement.clientWidth;
+        el.setAttribute('width', pw);
+        el.setAttribute('height', Math.min(pw * 2 / 3, window.innerHeight));
         el.appendChild(document.createElementNS('http://www.w3.org/2000/svg', 'g'));
     } },
     Line: class {},
@@ -82,10 +86,13 @@ document.addEventListener('DOMContentLoaded', () => {
         var svgEl = document.getElementById('chart');
         var svgW = parseInt(svgEl.getAttribute('width'), 10);
         var svgH = parseInt(svgEl.getAttribute('height'), 10);
-        var expectAspect = window.innerWidth <= 900 ? 1.5 : 2; // media query below 900px
-        smokeLog('cumulative svg sized to the fixed-aspect container',
-            svgW > 0 && svgH > 0 && Math.abs(svgW / svgH - expectAspect) < 0.1,
-            svgW + 'x' + svgH + ' (viewport ' + window.innerWidth + ')');
+        var box = svgEl.parentElement.getBoundingClientRect();
+        smokeLog('container uses chart.xkcd\u2019s native 3:2 aspect',
+            box.width > 0 && Math.abs(box.width / box.height - 1.5) < 0.05,
+            Math.round(box.width) + 'x' + Math.round(box.height));
+        smokeLog('cumulative svg fits the container (no clipping)',
+            svgW > 0 && svgH > 0 && Math.abs(svgW / svgH - 1.5) < 0.05 && svgH <= box.height + 2,
+            svgW + 'x' + svgH + ' in ' + Math.round(box.height));
         smokeLog('cumulative: svg shown, canvas hidden',
             document.getElementById('chart').style.display !== 'none' &&
             document.getElementById('rate-chart').style.display === 'none');
