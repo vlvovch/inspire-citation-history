@@ -1391,16 +1391,18 @@
         function computeSmoothRateSeries(record, Mode, fwhmOverride, nowMs) {
             const base = getCitationOffsets(record, nowMs);
             if (!base) {
-                return { points: [], widthMonths: 6 };
+                return { points: [], widthMonths: 12 };
             }
             const pubDate = base.pubDate;
             const T = base.spanMonths;
             const offsets = base.offsets;
 
             // Smoothing scale expressed as a FWHM, comparable to a bin width;
-            // auto: twice the auto bin width, at least half a year.
+            // auto: twice the auto bin width, at least one year — citation
+            // rates have a strong annual texture (conference seasons, indexing
+            // waves) that sub-year smoothing renders as wiggles, not signal.
             const autoBin = chooseBinWidthMonths(offsets.length, T);
-            const fwhm = fwhmOverride > 0 ? fwhmOverride : Math.max(2 * autoBin, 6);
+            const fwhm = fwhmOverride > 0 ? fwhmOverride : Math.max(2 * autoBin, 12);
             const h = fwhm / 2.3548; // Gaussian sigma in months
 
             const nGrid = Math.max(120, Math.min(400, Math.ceil((T / h) * 4)));

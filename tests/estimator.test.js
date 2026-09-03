@@ -209,7 +209,7 @@ check('poissonInterval68 fractional n stays sane', (() => {
 
 // --- Smooth estimator on the homogeneous record (trueRate=10, 48 months) ---
 const smooth = computeSmoothRateSeries(record, 0, 0, nowMs);
-check('smooth auto FWHM = max(2*autoBin, 6) = 6', smooth.widthMonths === 6, 'got ' + smooth.widthMonths);
+check('smooth auto FWHM = max(2*autoBin, 12) = 12', smooth.widthMonths === 12, 'got ' + smooth.widthMonths);
 check('smooth grid has >= 120 points', smooth.points.length >= 120, 'got ' + smooth.points.length);
 check('smooth x increasing Dates', smooth.points.every((p, i, a) =>
     Object.prototype.toString.call(p.x) === '[object Date]' && (i === 0 || p.x > a[i - 1].x)));
@@ -217,12 +217,13 @@ check('smooth lo<=y<=hi everywhere', smooth.points.every(p => p.lo <= p.y + 1e-9
 const midPts = smooth.points.filter((_, i) => i > smooth.points.length / 3 && i < 2 * smooth.points.length / 3);
 const midMean = midPts.reduce((s, p) => s + p.y, 0) / midPts.length;
 check(`smooth central mean ~ ${12 * trueRate}/yr (got ${midMean.toFixed(2)})`, Math.abs(midMean - 12 * trueRate) < 14.4);
-// interior effective exposure: E0 = n_eff / y should be ~ 2*sqrt(pi)*h
-const h6 = 6 / 2.3548;
+// interior effective exposure: E0 = n_eff / y should be ~ 2*sqrt(pi)*h,
+// with h derived from the series' own reported FWHM.
+const hAuto = smooth.widthMonths / 2.3548;
 const midP = smooth.points[Math.floor(smooth.points.length / 2)];
 const e0Mid = midP.n / (midP.y / 12); // y is per-year, exposure in months
-check(`interior E0 ~ 2*sqrt(pi)*h = ${(2 * Math.sqrt(Math.PI) * h6).toFixed(2)} (got ${e0Mid.toFixed(2)})`,
-    Math.abs(e0Mid - 2 * Math.sqrt(Math.PI) * h6) < 0.4);
+check(`interior E0 ~ 2*sqrt(pi)*h = ${(2 * Math.sqrt(Math.PI) * hAuto).toFixed(2)} (got ${e0Mid.toFixed(2)})`,
+    Math.abs(e0Mid - 2 * Math.sqrt(Math.PI) * hAuto) < 0.8);
 // boundary: effective exposure halves at the edge -> band ~sqrt(2) wider
 const edgeP = smooth.points[0];
 const e0Edge = edgeP.y > 0 ? edgeP.n / (edgeP.y / 12) : NaN;
