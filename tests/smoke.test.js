@@ -263,10 +263,17 @@ document.addEventListener('DOMContentLoaded', () => {
         smokeLog('yearly overlay: one histogram per paper on top of the estimate',
             histDs.length === 2 && cfgY.data.datasets[0].label.indexOf('Paper A') === 0,
             'hist=' + histDs.length);
-        smokeLog('yearly overlay: thin stepped outlines drawn',
-            Array.from(chartSvg().querySelectorAll('path.xkcd-chart-xyline')).filter(function (p) {
-                return p.getAttribute('stroke-width') === '1.5';
-            }).length === 2);
+        var histOutlines = Array.from(chartSvg().querySelectorAll('path.rate-hist-outline'));
+        smokeLog('yearly overlay: histogram bars rise from the zero baseline',
+            histOutlines.length === 2 && histOutlines.every(function (p) {
+                var dd = p.getAttribute('d');
+                var base = parseFloat(chartSvg().getAttribute('height')) - 110; // margins: top 60, bottom 50
+                var firstY = parseFloat(dd.slice(1).split('L')[0].split(',')[1]);
+                var lastY = parseFloat(dd.split('L').pop().split(',')[1]);
+                return Math.abs(firstY - base) < 1 && Math.abs(lastY - base) < 1 &&
+                    String(p.getAttribute('fill')).indexOf('rgba') === 0;
+            }),
+            'outlines=' + histOutlines.length);
         smokeLog('yearly overlay: legend still lists only the papers', legendRows().length === 2,
             legendRows().map(function (t) { return t.textContent; }).join(' | '));
         var yearlySeries = rateData.filter(function (r) { return r.estimator === 'yearly'; });
@@ -277,10 +284,9 @@ document.addEventListener('DOMContentLoaded', () => {
             }),
             JSON.stringify(yearlySeries.length ? yearlySeries[0].points.map(function (p) { return p.y; }) : []));
         // Hover the first histogram corner: title is the bare year
-        var histPath = Array.from(chartSvg().querySelectorAll('path.xkcd-chart-xyline')).filter(function (p) {
-            return p.getAttribute('stroke-width') === '1.5';
-        })[0];
-        var hp = histPath.getPointAtLength(0);
+        // (the hidden source line's first point sits exactly on that corner)
+        var srcPath = histOutlines[0].nextElementSibling;
+        var hp = srcPath.getPointAtLength(0);
         var hBox = chartSvg().getBoundingClientRect();
         var hsc = hBox.width / parseFloat(chartSvg().getAttribute('width'));
         chartSvg().dispatchEvent(new MouseEvent('mousemove', { bubbles: true,

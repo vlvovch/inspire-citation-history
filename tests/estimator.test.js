@@ -337,6 +337,12 @@ check('smooth empty record: zero rate, positive upper limit', (() => {
         JSON.stringify(corners.map(p => !!p.partial)));
     const seriesD = computeRateSeries(rec, 0, 12, nowTs);
     const cornersD = binnedToCorners(seriesD.points, 0);
+    const sharp = binnedToCorners(series.points, 1, true);
+    check('sharp corners hug the exact bin edges (histogram overlay)',
+        Math.abs(sharp[1].x - 12) < 0.05 && Math.abs(sharp[2].x - 12) < 0.05,
+        sharp[1].x + ',' + sharp[2].x);
+    check('sharp corners still strictly increasing',
+        sharp.every((p, i, a) => i === 0 || p.x > a[i - 1].x));
     check('date-mode corners are Date objects', // vm realm has its own Date class
         cornersD.every(p => Object.prototype.toString.call(p.x) === '[object Date]'));
     check('date-mode corner spacing matches the inset bin width',

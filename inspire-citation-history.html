@@ -1962,7 +1962,7 @@
         // monotone interpolation draws softly rounded steps (same idea as
         // the Bayesian-blocks view). trueX keeps the bin center for
         // tooltips; the CSV export uses the original center points.
-        function binnedToCorners(points, Mode) {
+        function binnedToCorners(points, Mode, sharpEdges) {
             const toX = (p, dMonths) => Mode === 0 ?
                 new Date(p.x.getTime() + dMonths * MS_PER_MONTH) :
                 (Mode === 2 ? p.x + dMonths / 12 : p.x + dMonths);
@@ -1971,7 +1971,7 @@
             points.forEach((p, k) => {
                 const w = p.w !== undefined ? p.w : 0;
                 const half = w / 2;
-                const ramp = Math.min(1.5, Math.max(0.25, 0.15 * w));
+                const ramp = sharpEdges ? 0.02 : Math.min(1.5, Math.max(0.25, 0.15 * w));
                 const insetL = k === 0 ? 0 : Math.min(ramp, 0.45 * w);
                 const insetR = k === nPts - 1 ? 0 : Math.min(ramp, 0.45 * w);
                 const common = { y: p.y, lo: p.lo, hi: p.hi, n: p.n, w: p.w,
@@ -2323,7 +2323,7 @@
                 if (yearlyOn) {
                     const ySeries = computeYearlyCountSeries(record, Mode);
                     if (ySeries.points.length > 0) {
-                        paper.hist = binnedToCorners(ySeries.points, Mode);
+                        paper.hist = binnedToCorners(ySeries.points, Mode, true);
                         rateData.push({
                             recid: recid,
                             label: record.refname,
@@ -2518,16 +2518,15 @@
                     if (d.kind !== 'main' && d.kind !== 'tail' && d.kind !== 'hist') return;
                     const grp = groups[i];
                     const circles = grp ? grp.querySelectorAll('circle') : [];
+                    if (d.kind === 'hist') d.pixels = [];
                     for (let k = 0; k < circles.length; k++) {
                         const p = d.kind === 'main' ? d.paper.main[k] :
                             (d.kind === 'tail' ? d.paper.tail[k] : d.paper.hist[k]);
                         if (!p) continue;
-                        hoverPts.push({
-                            x: parseFloat(circles[k].getAttribute('cx')),
-                            y: parseFloat(circles[k].getAttribute('cy')),
-                            p: p,
-                            paper: d.paper
-                        });
+                        const cx = parseFloat(circles[k].getAttribute('cx'));
+                        const cy = parseFloat(circles[k].getAttribute('cy'));
+                        hoverPts.push({ x: cx, y: cy, p: p, paper: d.paper });
+                        if (d.kind === 'hist') d.pixels.push({ x: cx, y: cy });
                     }
                     if (d.kind !== 'main' || circles.length === 0) return;
                     const tailIdx = plan.findIndex(e => e.kind === 'tail' && e.paper === d.paper);
@@ -2556,7 +2555,25 @@
                     } else if (d.kind === 'tail') {
                         path.setAttribute('stroke-dasharray', '7,7');
                     } else if (d.kind === 'hist') {
-                        path.setAttribute('stroke-width', '1.5');
+                        // Redraw as a histogram: bars rising from the zero
+                        // baseline with sharp edges and a light fill (the
+                        // library's own monotone line is hidden)
+                        path.setAttribute('display', 'none');
+                        if (d.pixels && d.pixels.length >= 2) {
+                            const hp = document.createElementNS(NS, 'path');
+                            hp.setAttribute('class', 'rate-hist-outline');
+                            let dd = 'M' + d.pixels[0].x.toFixed(1) + ',' + innerH.toFixed(1);
+                            d.pixels.forEach(q => {
+                                dd += 'L' + q.x.toFixed(1) + ',' + q.y.toFixed(1);
+                            });
+                            dd += 'L' + d.pixels[d.pixels.length - 1].x.toFixed(1) + ',' + innerH.toFixed(1);
+                            hp.setAttribute('d', dd);
+                            hp.setAttribute('stroke', d.paper.color);
+                            hp.setAttribute('stroke-width', '1.5');
+                            hp.setAttribute('fill', hexToRgba(d.paper.color, 0.1));
+                            if (filterAttr) hp.setAttribute('filter', filterAttr);
+                            graphG.insertBefore(hp, path);
+                        }
                     }
                     if (groups[i]) groups[i].remove();
                 });
