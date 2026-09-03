@@ -254,6 +254,33 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('blocks-p0').dispatchEvent(new Event('change'));
         smokeLog('p0 param dropped at strict default', location.search.indexOf('p0=') < 0, location.search);
 
+        // Yearly actual counts
+        document.getElementById('rate-estimator').value = 'yearly';
+        updateChart();
+        smokeLog('yearly: integer actual counts without a band',
+            rateData[0].estimator === 'yearly' &&
+            rateData[0].points.every(function (p) { return Number.isInteger(p.y) && p.lo === p.y && p.hi === p.y; }),
+            JSON.stringify(rateData[0].points.map(function (p) { return p.y; })));
+        smokeLog('yearly: one bin per year of history',
+            rateData[0].points.length >= 7 && rateData[0].points.length <= 9,
+            'bins=' + rateData[0].points.length);
+        var cfgY = lastCfg();
+        var mainLenY = cfgY.data.datasets[0].data.length;
+        var tailLenY = cfgY.data.datasets.filter(function (d) { return d.label === 'now (provisional)'; })[0].data.length;
+        smokeLog('yearly: corner-pair steps plotted',
+            mainLenY + tailLenY - 1 === 2 * rateData[0].points.length,
+            mainLenY + '+' + tailLenY + '-1 vs 2x' + rateData[0].points.length);
+        smokeLog('yearly: width selector hidden', document.getElementById('bin-width-group').style.display === 'none');
+        var yearlyLabels = Array.from(chartSvg().querySelectorAll('text.rate-now-label'));
+        smokeLog('yearly: label is the bare count for the current year',
+            yearlyLabels.length === 2 && yearlyLabels.every(function (t) { return /^\\d+$/.test(t.textContent); }),
+            yearlyLabels.map(function (t) { return t.textContent; }).join(' | '));
+        updateUrl();
+        smokeLog('url carries est=yearly', location.search.indexOf('est=yearly') >= 0, location.search);
+        history.pushState({}, '', '?rate=true&est=yearly');
+        parseUrlParams();
+        smokeLog('est=yearly URL parameter parsed', document.getElementById('rate-estimator').value === 'yearly');
+
         // Every rate control must redraw through its real change event
         var controlIds = ['rate-estimator', 'bin-width', 'blocks-p0', 'wsb-fit'];
         var allWired = controlIds.every(function (id) {

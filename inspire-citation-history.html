@@ -275,6 +275,7 @@
                 <select id="rate-estimator">
                     <option value="smooth">Smooth</option>
                     <option value="binned">Binned</option>
+                    <option value="yearly">Yearly counts</option>
                     <option value="blocks">Bayesian blocks</option>
                 </select>
             </div>
@@ -1379,6 +1380,59 @@
             return { points: points, binMonths: binMonths };
         }
 
+        // Actual citation counts per year, as INSPIRE lists them: calendar
+        // years in date mode, 12-month publication anniversaries in aligned
+        // mode. The counts are the raw data - integers, no normalization,
+        // no error band; only the still-accruing current year is
+        // provisional and shows the count so far. Slivers shorter than half
+        // a month at either end fold into their neighbor.
+        function computeYearlyCountSeries(record, Mode, nowMs) {
+            const base = getCitationOffsets(record, nowMs);
+            if (!base) {
+                return { points: [], widthMonths: 12 };
+            }
+            const pubDate = base.pubDate;
+            const T = base.spanMonths;
+            const sorted = base.offsets.slice().sort((a, b) => a - b);
+
+            // Bin edges in months since publication
+            const edges = [0];
+            if (Mode === 0) {
+                const nowDate = new Date(pubDate.getTime() + T * MS_PER_MONTH);
+                for (let y = pubDate.getUTCFullYear() + 1; y <= nowDate.getUTCFullYear(); y++) {
+                    const m = (Date.UTC(y, 0, 1) - pubDate.getTime()) / MS_PER_MONTH;
+                    if (m > 0.5 && m < T - 0.5) edges.push(m);
+                }
+            } else {
+                for (let m = 12; m < T - 0.5; m += 12) edges.push(m);
+            }
+            edges.push(T);
+
+            const points = [];
+            let idx = 0;
+            for (let k = 0; k + 1 < edges.length; k++) {
+                const start = edges[k];
+                const end = edges[k + 1];
+                if (!(end - start > 1e-6)) continue;
+                const isLast = (k + 2 === edges.length);
+                let n = 0;
+                while (idx < sorted.length && (isLast || sorted[idx] < end)) {
+                    n++;
+                    idx++;
+                }
+                points.push({
+                    x: rateXValue(pubDate, (start + end) / 2, Mode),
+                    y: n,
+                    lo: n,
+                    hi: n,
+                    n: n,
+                    w: Math.round((end - start) * 100) / 100,
+                    partial: isLast // current year: still accruing
+                });
+            }
+            return { points: points, widthMonths: 12 };
+        }
+
         // Smooth rate estimate: Gaussian-kernel intensity estimator with
         // cut-and-normalize boundary correction,
         //   lambda(t) = sum_i K_h(t - t_i) / m(t),   m(t) = int_0^T K_h(t - u) du.
@@ -1918,7 +1972,10 @@
         function presentRateLines(point, fit) {
             const err = (point.hi - point.lo) / 2;
             const dec = point.y < 10 ? 1 : 0;
-            const lines = [point.y.toFixed(dec) + ' ± ' + err.toFixed(dec)];
+            // A degenerate interval means an actual count, not an estimate
+            const lines = [err > 0 ?
+                point.y.toFixed(dec) + ' ± ' + err.toFixed(dec) :
+                String(Math.round(point.y))];
             if (fit && fit.ok && fit.reliable) {
                 lines.push('total ' + formatCountWithError(fit.cinf, (fit.hi - fit.lo) / 2) +
                     (fit.unstable ? '?' : ''));
@@ -1931,7 +1988,10 @@
         function rateTooltipText(p) {
             const up = p.hi - p.y;
             const dn = p.y - p.lo;
-            if (!(up > 0 || dn > 0)) return p.y.toFixed(1);
+            if (!(up > 0 || dn > 0)) {
+                // Degenerate interval: an actual count, shown as one
+                return Number.isInteger(p.y) ? String(p.y) : p.y.toFixed(1);
+            }
             if (Math.abs(up - dn) < 0.15 * Math.max(up, dn)) {
                 return p.y.toFixed(1) + ' ± ' + ((up + dn) / 2).toFixed(1);
             }
@@ -2018,7 +2078,8 @@
             const estimatorChoice = document.getElementById('rate-estimator').value;
             document.getElementById('estimator-group').style.display = showRate ? 'flex' : 'none';
             document.getElementById('bin-width-group').style.display =
-                showRate && estimatorChoice !== 'blocks' ? 'flex' : 'none';
+                showRate && estimatorChoice !== 'blocks' && estimatorChoice !== 'yearly' ?
+                    'flex' : 'none';
             document.getElementById('p0-group').style.display =
                 showRate && estimatorChoice === 'blocks' ? 'flex' : 'none';
             document.getElementById('wsb-group').style.display = 'flex'; // both views
@@ -2209,7 +2270,9 @@
                     computeSmoothRateSeries(record, Mode, binOverride) :
                     (estimator === 'blocks' ?
                         computeBlocksRateSeries(record, Mode, blocksP0) :
-                        computeRateSeries(record, Mode, binOverride));
+                        (estimator === 'yearly' ?
+                            computeYearlyCountSeries(record, Mode) :
+                            computeRateSeries(record, Mode, binOverride)));
                 if (series.points.length === 0) return;
 
                 const color = COLORS[colorIndex % COLORS.length];
@@ -2222,7 +2285,7 @@
                     points: series.points
                 });
 
-                const plotPts = estimator === 'binned' ?
+                const plotPts = (estimator === 'binned' || estimator === 'yearly') ?
                     binnedToCorners(series.points, Mode) : series.points;
                 let tailFrom = plotPts.length;
                 for (let i = 0; i < plotPts.length; i++) {
@@ -2788,7 +2851,7 @@
                 document.getElementById('bin-width').value = String(binParam);
             }
             const estParam = urlParams.get('est');
-            if (['smooth', 'binned', 'blocks'].includes(estParam)) {
+            if (['smooth', 'binned', 'yearly', 'blocks'].includes(estParam)) {
                 document.getElementById('rate-estimator').value = estParam;
             } else {
                 // Legacy parameter from before the estimator selector

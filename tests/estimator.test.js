@@ -56,8 +56,8 @@ const section = scriptBody.slice(sectionStart, sectionEnd)
     + '\n' + scriptBody.slice(cacheStart, cacheEnd) + '\n' + scriptBody.slice(spreadStart, spreadEnd);
 const sandbox = {};
 vm.createContext(sandbox);
-vm.runInContext(section + '\nthis.poissonInterval68 = poissonInterval68; this.chooseBinWidthMonths = chooseBinWidthMonths; this.computeRateSeries = computeRateSeries; this.hexToRgba = hexToRgba; this.erf = erf; this.normCdf = normCdf; this.computeSmoothRateSeries = computeSmoothRateSeries; this.binnedToCorners = binnedToCorners; this.presentRateLines = presentRateLines; this.rateTooltipText = rateTooltipText; this.parseRecordIdentifier = parseRecordIdentifier; this.computeBackoffDelayMs = computeBackoffDelayMs; this.cacheLoad = cacheLoad; this.cacheSave = cacheSave; this.cacheEvictOldest = cacheEvictOldest; this.cacheKeys = cacheKeys; this.safeLocalStorage = safeLocalStorage; this.CACHE_PREFIX = CACHE_PREFIX; this.CACHE_TTL_MS = CACHE_TTL_MS; this.CACHE_MAX_ENTRIES = CACHE_MAX_ENTRIES; this.bayesianBlocksEdges = bayesianBlocksEdges; this.computeBlocksRateSeries = computeBlocksRateSeries; this.BLOCKS_P0 = BLOCKS_P0; this.spreadImpreciseDates = spreadImpreciseDates; this.cacheRemoveOldVersions = cacheRemoveOldVersions; this.normInv = normInv; this.wsbProfile = wsbProfile; this.wsbFitCore = wsbFitCore; this.wsbFit = wsbFit; this.wsbSimulate = wsbSimulate; this.wsbBootstrap = wsbBootstrap; this.wsbRateCurve = wsbRateCurve; this.formatCitationCount = formatCitationCount; this.WSB_M = WSB_M; this.WSB_MIN_MONTHS = WSB_MIN_MONTHS; this.WSB_MIN_CITATIONS = WSB_MIN_CITATIONS; this.wsbCumulativeCurve = wsbCumulativeCurve; this.formatCountWithError = formatCountWithError;', sandbox);
-const { poissonInterval68, chooseBinWidthMonths, computeRateSeries, hexToRgba, erf, normCdf, computeSmoothRateSeries, binnedToCorners, presentRateLines, rateTooltipText, parseRecordIdentifier, computeBackoffDelayMs, cacheLoad, cacheSave, cacheEvictOldest, cacheKeys, safeLocalStorage, CACHE_PREFIX, CACHE_TTL_MS, CACHE_MAX_ENTRIES, bayesianBlocksEdges, computeBlocksRateSeries, BLOCKS_P0, spreadImpreciseDates, cacheRemoveOldVersions, normInv, wsbProfile, wsbFitCore, wsbFit, wsbSimulate, wsbBootstrap, wsbRateCurve, formatCitationCount, WSB_M, WSB_MIN_MONTHS, WSB_MIN_CITATIONS, wsbCumulativeCurve, formatCountWithError } = sandbox;
+vm.runInContext(section + '\nthis.poissonInterval68 = poissonInterval68; this.chooseBinWidthMonths = chooseBinWidthMonths; this.computeRateSeries = computeRateSeries; this.computeYearlyCountSeries = computeYearlyCountSeries; this.hexToRgba = hexToRgba; this.erf = erf; this.normCdf = normCdf; this.computeSmoothRateSeries = computeSmoothRateSeries; this.binnedToCorners = binnedToCorners; this.presentRateLines = presentRateLines; this.rateTooltipText = rateTooltipText; this.parseRecordIdentifier = parseRecordIdentifier; this.computeBackoffDelayMs = computeBackoffDelayMs; this.cacheLoad = cacheLoad; this.cacheSave = cacheSave; this.cacheEvictOldest = cacheEvictOldest; this.cacheKeys = cacheKeys; this.safeLocalStorage = safeLocalStorage; this.CACHE_PREFIX = CACHE_PREFIX; this.CACHE_TTL_MS = CACHE_TTL_MS; this.CACHE_MAX_ENTRIES = CACHE_MAX_ENTRIES; this.bayesianBlocksEdges = bayesianBlocksEdges; this.computeBlocksRateSeries = computeBlocksRateSeries; this.BLOCKS_P0 = BLOCKS_P0; this.spreadImpreciseDates = spreadImpreciseDates; this.cacheRemoveOldVersions = cacheRemoveOldVersions; this.normInv = normInv; this.wsbProfile = wsbProfile; this.wsbFitCore = wsbFitCore; this.wsbFit = wsbFit; this.wsbSimulate = wsbSimulate; this.wsbBootstrap = wsbBootstrap; this.wsbRateCurve = wsbRateCurve; this.formatCitationCount = formatCitationCount; this.WSB_M = WSB_M; this.WSB_MIN_MONTHS = WSB_MIN_MONTHS; this.WSB_MIN_CITATIONS = WSB_MIN_CITATIONS; this.wsbCumulativeCurve = wsbCumulativeCurve; this.formatCountWithError = formatCountWithError;', sandbox);
+const { poissonInterval68, chooseBinWidthMonths, computeRateSeries, computeYearlyCountSeries, hexToRgba, erf, normCdf, computeSmoothRateSeries, binnedToCorners, presentRateLines, rateTooltipText, parseRecordIdentifier, computeBackoffDelayMs, cacheLoad, cacheSave, cacheEvictOldest, cacheKeys, safeLocalStorage, CACHE_PREFIX, CACHE_TTL_MS, CACHE_MAX_ENTRIES, bayesianBlocksEdges, computeBlocksRateSeries, BLOCKS_P0, spreadImpreciseDates, cacheRemoveOldVersions, normInv, wsbProfile, wsbFitCore, wsbFit, wsbSimulate, wsbBootstrap, wsbRateCurve, formatCitationCount, WSB_M, WSB_MIN_MONTHS, WSB_MIN_CITATIONS, wsbCumulativeCurve, formatCountWithError } = sandbox;
 
 // Deterministic PRNG (mulberry32) so stochastic checks are reproducible
 let __seed = 0xC0FFEE;
@@ -294,8 +294,11 @@ check('smooth empty record: zero rate, positive upper limit', (() => {
     check('tooltip asymmetric +up -down',
         rateTooltipText({ y: 1.0, lo: 0.2, hi: 3.0 }) === '1.0 +2.0 -0.8',
         rateTooltipText({ y: 1.0, lo: 0.2, hi: 3.0 }));
-    check('tooltip degenerate interval falls back to the value',
-        rateTooltipText({ y: 5.0, lo: 5.0, hi: 5.0 }) === '5.0');
+    check('tooltip degenerate interval shows the count as an integer',
+        rateTooltipText({ y: 5.0, lo: 5.0, hi: 5.0 }) === '5' &&
+        rateTooltipText({ y: 5.5, lo: 5.5, hi: 5.5 }) === '5.5');
+    check('label for a degenerate interval is the bare count',
+        JSON.stringify(presentRateLines({ y: 12, lo: 12, hi: 12 }, null)) === '["12"]');
 }
 
 // --- binnedToCorners: soft-step representation of the binned estimate ---
@@ -339,6 +342,53 @@ check('smooth empty record: zero rate, positive upper limit', (() => {
     check('date-mode corner spacing matches the inset bin width',
         Math.abs((cornersD[1].x.getTime() - cornersD[0].x.getTime()) / MS_PER_MONTH - 10.5) < 0.05,
         String((cornersD[1].x.getTime() - cornersD[0].x.getTime()) / MS_PER_MONTH));
+}
+
+// --- computeYearlyCountSeries: actual counts per calendar/anniversary year ---
+{
+    // 2 citations/month, published 2020-01-01, now 2026-07-01
+    const nowTs = Date.UTC(2026, 6, 1);
+    const dates = [];
+    const pubMs = Date.UTC(2020, 0, 1);
+    for (let m = 0; m < 78; m += 0.5) {
+        const t = pubMs + m * MS_PER_MONTH;
+        if (t < nowTs) dates.push(new Date(t).toISOString().slice(0, 10));
+    }
+    const rec = { date: '2020-01-01', citation_dates: dates };
+    const s = computeYearlyCountSeries(rec, 0, nowTs);
+    check('yearly: integer actual counts with n = y', s.points.every(p => Number.isInteger(p.y) && p.y === p.n),
+        JSON.stringify(s.points.map(p => p.y)));
+    check('yearly: no error band (lo = hi = y)', s.points.every(p => p.lo === p.y && p.hi === p.y));
+    check('yearly: counts sum to the total number of citations',
+        s.points.reduce((a, p) => a + p.y, 0) === dates.length,
+        s.points.reduce((a, p) => a + p.y, 0) + ' vs ' + dates.length);
+    check('yearly: one bin per calendar year 2020-2026', s.points.length === 7, 'got ' + s.points.length);
+    check('yearly: full years hold ~24 citations each',
+        s.points.slice(0, 6).every(p => p.y >= 23 && p.y <= 25), JSON.stringify(s.points.map(p => p.y)));
+    check('yearly: only the current year is provisional',
+        s.points.filter(p => p.partial).length === 1 && s.points[s.points.length - 1].partial === true);
+    check('yearly: current year shows the count so far, not annualized',
+        s.points[s.points.length - 1].y >= 11 && s.points[s.points.length - 1].y <= 13,
+        String(s.points[s.points.length - 1].y));
+    check('yearly: per-point widths cover about 12 months',
+        s.points.slice(1, 6).every(p => Math.abs(p.w - 12) < 0.2), JSON.stringify(s.points.map(p => p.w)));
+    const corners = binnedToCorners(s.points, 0);
+    check('yearly: corner pairs strictly increasing for plotting',
+        corners.length === 2 * s.points.length &&
+        corners.every((p, i, a) => i === 0 || p.x > a[i - 1].x));
+    // Aligned mode: 12-month anniversary bins instead of calendar years
+    const sA = computeYearlyCountSeries(rec, 2, nowTs);
+    check('yearly aligned: anniversary-year bins with the first centered at 0.5y',
+        sA.points.length === 7 && Math.abs(sA.points[0].x - 0.5) < 0.05,
+        JSON.stringify(sA.points.map(p => p.x)));
+    check('yearly aligned: same total count', sA.points.reduce((a, p) => a + p.y, 0) === dates.length);
+    // Mid-year publication: the first calendar year is a partial-but-final count
+    const recMid = { date: '2020-07-01', citation_dates: dates.slice(0, 60).map(d =>
+        new Date(Date.UTC(2020, 6, 1) + (new Date(d).getTime() - pubMs)).toISOString().slice(0, 10)) };
+    const sM = computeYearlyCountSeries(recMid, 0, nowTs);
+    check('yearly: first partial calendar year is not flagged provisional',
+        sM.points.length >= 2 && sM.points[0].partial === false && sM.points[0].y < sM.points[1].y,
+        JSON.stringify(sM.points.map(p => [p.y, p.partial])));
 }
 
 // --- Record identifier parser ---
