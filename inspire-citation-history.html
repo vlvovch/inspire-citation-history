@@ -275,7 +275,6 @@
                 <select id="rate-estimator">
                     <option value="smooth">Smooth</option>
                     <option value="binned">Binned</option>
-                    <option value="yearly">Yearly counts</option>
                     <option value="blocks">Bayesian blocks</option>
                 </select>
             </div>
@@ -296,6 +295,10 @@
                     <option value="6">6 months</option>
                     <option value="12">1 year</option>
                 </select>
+            </div>
+            <div id="yearly-group" style="display: none; align-items: center; margin-right: 20px;">
+                <input type="checkbox" id="yearly-counts" />
+                <label for="yearly-counts" style="margin-left: 5px;">Yearly counts</label>
             </div>
             <div style="display: flex; align-items: center; margin-right: 20px;">
                 <input type="checkbox" id="show-rate" />
@@ -519,6 +522,12 @@
                         url.searchParams.delete('est');
                     }
                     url.searchParams.delete('smooth'); // legacy parameter
+                    // Yearly-counts histogram overlay
+                    if (document.getElementById('yearly-counts').checked) {
+                        url.searchParams.set('yearly', 'true');
+                    } else {
+                        url.searchParams.delete('yearly');
+                    }
                     // Blocks sensitivity, when not the strict default
                     const p0Value = document.getElementById('blocks-p0').value;
                     if (estimatorChoice === 'blocks' && p0Value !== '0.05') {
@@ -532,6 +541,7 @@
                     url.searchParams.delete('smooth');
                     url.searchParams.delete('est');
                     url.searchParams.delete('p0');
+                    url.searchParams.delete('yearly');
                 }
 
                 // Model fit applies to both views
@@ -549,6 +559,7 @@
                 url.searchParams.delete('smooth');
                 url.searchParams.delete('est');
                 url.searchParams.delete('p0');
+                url.searchParams.delete('yearly');
                 url.searchParams.delete('wsb');
             }
             
@@ -1420,14 +1431,18 @@
                     n++;
                     idx++;
                 }
+                const mid = (start + end) / 2;
                 points.push({
-                    x: rateXValue(pubDate, (start + end) / 2, Mode),
+                    x: rateXValue(pubDate, mid, Mode),
                     y: n,
                     lo: n,
                     hi: n,
                     n: n,
                     w: Math.round((end - start) * 100) / 100,
-                    partial: isLast // current year: still accruing
+                    partial: isLast, // current year: still accruing
+                    yearLabel: Mode === 0 ?
+                        String(new Date(pubDate.getTime() + mid * MS_PER_MONTH).getUTCFullYear()) :
+                        'year ' + (Math.floor(mid / 12) + 1)
                 });
             }
             return { points: points, widthMonths: 12 };
@@ -1960,7 +1975,7 @@
                 const insetL = k === 0 ? 0 : Math.min(ramp, 0.45 * w);
                 const insetR = k === nPts - 1 ? 0 : Math.min(ramp, 0.45 * w);
                 const common = { y: p.y, lo: p.lo, hi: p.hi, n: p.n, w: p.w,
-                    partial: p.partial, trueX: p.x };
+                    partial: p.partial, trueX: p.x, yearLabel: p.yearLabel };
                 corners.push(Object.assign({ x: toX(p, -half + insetL) }, common));
                 corners.push(Object.assign({ x: toX(p, half - insetR), dup: true }, common));
             });
@@ -2077,9 +2092,9 @@
             // mode, and is irrelevant for Bayesian blocks
             const estimatorChoice = document.getElementById('rate-estimator').value;
             document.getElementById('estimator-group').style.display = showRate ? 'flex' : 'none';
+            document.getElementById('yearly-group').style.display = showRate ? 'flex' : 'none';
             document.getElementById('bin-width-group').style.display =
-                showRate && estimatorChoice !== 'blocks' && estimatorChoice !== 'yearly' ?
-                    'flex' : 'none';
+                showRate && estimatorChoice !== 'blocks' ? 'flex' : 'none';
             document.getElementById('p0-group').style.display =
                 showRate && estimatorChoice === 'blocks' ? 'flex' : 'none';
             document.getElementById('wsb-group').style.display = 'flex'; // both views
@@ -2252,6 +2267,7 @@
             const estimator = document.getElementById('rate-estimator').value;
             const blocksP0 = parseFloat(document.getElementById('blocks-p0').value) || BLOCKS_P0;
             const wsbOn = document.getElementById('wsb-fit').checked;
+            const yearlyOn = document.getElementById('yearly-counts').checked;
 
             // Per-paper plotting plan: central curve split into a solid part
             // and a provisional (dashed) tail, band edges, optional model fit
@@ -2270,9 +2286,7 @@
                     computeSmoothRateSeries(record, Mode, binOverride) :
                     (estimator === 'blocks' ?
                         computeBlocksRateSeries(record, Mode, blocksP0) :
-                        (estimator === 'yearly' ?
-                            computeYearlyCountSeries(record, Mode) :
-                            computeRateSeries(record, Mode, binOverride)));
+                        computeRateSeries(record, Mode, binOverride));
                 if (series.points.length === 0) return;
 
                 const color = COLORS[colorIndex % COLORS.length];
@@ -2285,7 +2299,7 @@
                     points: series.points
                 });
 
-                const plotPts = (estimator === 'binned' || estimator === 'yearly') ?
+                const plotPts = estimator === 'binned' ?
                     binnedToCorners(series.points, Mode) : series.points;
                 let tailFrom = plotPts.length;
                 for (let i = 0; i < plotPts.length; i++) {
@@ -2299,8 +2313,26 @@
                     band: plotPts,
                     last: series.points[series.points.length - 1],
                     wsb: null,
-                    fit: null
+                    fit: null,
+                    hist: null
                 };
+
+                // Optional overlay of the actual per-year citation counts,
+                // drawn as a thin histogram outline over the estimate (the
+                // count series also joins the CSV export)
+                if (yearlyOn) {
+                    const ySeries = computeYearlyCountSeries(record, Mode);
+                    if (ySeries.points.length > 0) {
+                        paper.hist = binnedToCorners(ySeries.points, Mode);
+                        rateData.push({
+                            recid: recid,
+                            label: record.refname,
+                            estimator: 'yearly',
+                            widthMonths: 12,
+                            points: ySeries.points
+                        });
+                    }
+                }
 
                 // Optional WSB model overlay: dashed fitted rate curve, with
                 // the verdict spelled out under the chart
@@ -2371,6 +2403,12 @@
                     dataColors.push(hexToRgba(paper.color, 0.45));
                     helperLabels.push('model fit');
                     plan.push({ kind: 'wsb', paper: paper });
+                }
+                if (paper.hist) {
+                    datasets.push({ label: 'yearly counts', data: paper.hist.map(xy) });
+                    dataColors.push(paper.color);
+                    helperLabels.push('yearly counts');
+                    plan.push({ kind: 'hist', paper: paper });
                 }
             });
 
@@ -2477,11 +2515,12 @@
                 const hoverPts = [];
                 const annos = [];
                 plan.forEach((d, i) => {
-                    if (d.kind !== 'main' && d.kind !== 'tail') return;
+                    if (d.kind !== 'main' && d.kind !== 'tail' && d.kind !== 'hist') return;
                     const grp = groups[i];
                     const circles = grp ? grp.querySelectorAll('circle') : [];
                     for (let k = 0; k < circles.length; k++) {
-                        const p = d.kind === 'main' ? d.paper.main[k] : d.paper.tail[k];
+                        const p = d.kind === 'main' ? d.paper.main[k] :
+                            (d.kind === 'tail' ? d.paper.tail[k] : d.paper.hist[k]);
                         if (!p) continue;
                         hoverPts.push({
                             x: parseFloat(circles[k].getAttribute('cx')),
@@ -2516,6 +2555,8 @@
                         path.setAttribute('stroke-width', '2');
                     } else if (d.kind === 'tail') {
                         path.setAttribute('stroke-dasharray', '7,7');
+                    } else if (d.kind === 'hist') {
+                        path.setAttribute('stroke-width', '1.5');
                     }
                     if (groups[i]) groups[i].remove();
                 });
@@ -2586,6 +2627,7 @@
                 svg.appendChild(tip);
 
                 const fmtX = (p) => {
+                    if (p.yearLabel) return p.yearLabel;
                     const x = p.trueX !== undefined ? p.trueX : p.x;
                     if (Mode === 0) {
                         return (x instanceof Date ? x : new Date(x)).toLocaleDateString('en-US',
@@ -2808,6 +2850,10 @@
             updateChart();
             updateUrl();
         });
+        document.getElementById('yearly-counts').addEventListener('change', function() {
+            updateChart();
+            updateUrl();
+        });
         document.getElementById('wsb-fit').addEventListener('change', function() {
             updateChart();
             updateUrl();
@@ -2851,7 +2897,7 @@
                 document.getElementById('bin-width').value = String(binParam);
             }
             const estParam = urlParams.get('est');
-            if (['smooth', 'binned', 'yearly', 'blocks'].includes(estParam)) {
+            if (['smooth', 'binned', 'blocks'].includes(estParam)) {
                 document.getElementById('rate-estimator').value = estParam;
             } else {
                 // Legacy parameter from before the estimator selector
@@ -2863,6 +2909,10 @@
             const p0Param = urlParams.get('p0');
             if (['0.05', '0.3', '0.9'].includes(p0Param)) {
                 document.getElementById('blocks-p0').value = p0Param;
+            }
+            const yearlyParam = urlParams.get('yearly');
+            if (yearlyParam !== null) {
+                document.getElementById('yearly-counts').checked = yearlyParam.toLowerCase() === 'true';
             }
             const wsbParam = urlParams.get('wsb');
             if (wsbParam !== null) {

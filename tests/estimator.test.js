@@ -372,16 +372,24 @@ check('smooth empty record: zero rate, positive upper limit', (() => {
         String(s.points[s.points.length - 1].y));
     check('yearly: per-point widths cover about 12 months',
         s.points.slice(1, 6).every(p => Math.abs(p.w - 12) < 0.2), JSON.stringify(s.points.map(p => p.w)));
+    check('yearly: calendar-year labels for tooltips',
+        s.points[0].yearLabel === '2020' && s.points[s.points.length - 1].yearLabel === '2026',
+        JSON.stringify(s.points.map(p => p.yearLabel)));
     const corners = binnedToCorners(s.points, 0);
     check('yearly: corner pairs strictly increasing for plotting',
         corners.length === 2 * s.points.length &&
         corners.every((p, i, a) => i === 0 || p.x > a[i - 1].x));
+    check('yearly: corners keep the year label',
+        corners.every((p, i) => p.yearLabel === s.points[Math.floor(i / 2)].yearLabel));
     // Aligned mode: 12-month anniversary bins instead of calendar years
     const sA = computeYearlyCountSeries(rec, 2, nowTs);
     check('yearly aligned: anniversary-year bins with the first centered at 0.5y',
         sA.points.length === 7 && Math.abs(sA.points[0].x - 0.5) < 0.05,
         JSON.stringify(sA.points.map(p => p.x)));
     check('yearly aligned: same total count', sA.points.reduce((a, p) => a + p.y, 0) === dates.length);
+    check('yearly aligned: anniversary-year labels',
+        sA.points[0].yearLabel === 'year 1' && sA.points[2].yearLabel === 'year 3',
+        JSON.stringify(sA.points.map(p => p.yearLabel)));
     // Mid-year publication: the first calendar year is a partial-but-final count
     const recMid = { date: '2020-07-01', citation_dates: dates.slice(0, 60).map(d =>
         new Date(Date.UTC(2020, 6, 1) + (new Date(d).getTime() - pubMs)).toISOString().slice(0, 10)) };

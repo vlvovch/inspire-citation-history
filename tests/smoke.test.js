@@ -254,35 +254,62 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('blocks-p0').dispatchEvent(new Event('change'));
         smokeLog('p0 param dropped at strict default', location.search.indexOf('p0=') < 0, location.search);
 
-        // Yearly actual counts
-        document.getElementById('rate-estimator').value = 'yearly';
-        updateChart();
-        smokeLog('yearly: integer actual counts without a band',
-            rateData[0].estimator === 'yearly' &&
-            rateData[0].points.every(function (p) { return Number.isInteger(p.y) && p.lo === p.y && p.hi === p.y; }),
-            JSON.stringify(rateData[0].points.map(function (p) { return p.y; })));
-        smokeLog('yearly: one bin per year of history',
-            rateData[0].points.length >= 7 && rateData[0].points.length <= 9,
-            'bins=' + rateData[0].points.length);
+        // Yearly-counts histogram overlay on the estimate
+        document.getElementById('rate-estimator').value = 'smooth';
+        document.getElementById('yearly-counts').checked = true;
+        document.getElementById('yearly-counts').dispatchEvent(new Event('change'));
         var cfgY = lastCfg();
-        var mainLenY = cfgY.data.datasets[0].data.length;
-        var tailLenY = cfgY.data.datasets.filter(function (d) { return d.label === 'now (provisional)'; })[0].data.length;
-        smokeLog('yearly: corner-pair steps plotted',
-            mainLenY + tailLenY - 1 === 2 * rateData[0].points.length,
-            mainLenY + '+' + tailLenY + '-1 vs 2x' + rateData[0].points.length);
-        smokeLog('yearly: width selector hidden', document.getElementById('bin-width-group').style.display === 'none');
-        var yearlyLabels = Array.from(chartSvg().querySelectorAll('text.rate-now-label'));
-        smokeLog('yearly: label is the bare count for the current year',
-            yearlyLabels.length === 2 && yearlyLabels.every(function (t) { return /^\\d+$/.test(t.textContent); }),
-            yearlyLabels.map(function (t) { return t.textContent; }).join(' | '));
+        var histDs = cfgY.data.datasets.filter(function (d) { return d.label === 'yearly counts'; });
+        smokeLog('yearly overlay: one histogram per paper on top of the estimate',
+            histDs.length === 2 && cfgY.data.datasets[0].label.indexOf('Paper A') === 0,
+            'hist=' + histDs.length);
+        smokeLog('yearly overlay: thin stepped outlines drawn',
+            Array.from(chartSvg().querySelectorAll('path.xkcd-chart-xyline')).filter(function (p) {
+                return p.getAttribute('stroke-width') === '1.5';
+            }).length === 2);
+        smokeLog('yearly overlay: legend still lists only the papers', legendRows().length === 2,
+            legendRows().map(function (t) { return t.textContent; }).join(' | '));
+        var yearlySeries = rateData.filter(function (r) { return r.estimator === 'yearly'; });
+        smokeLog('yearly overlay: integer count series join the CSV data',
+            rateData.length === 4 && yearlySeries.length === 2 &&
+            yearlySeries[0].points.every(function (p) {
+                return Number.isInteger(p.y) && p.lo === p.y && p.hi === p.y && typeof p.yearLabel === 'string';
+            }),
+            JSON.stringify(yearlySeries.length ? yearlySeries[0].points.map(function (p) { return p.y; }) : []));
+        // Hover the first histogram corner: title is the bare year
+        var histPath = Array.from(chartSvg().querySelectorAll('path.xkcd-chart-xyline')).filter(function (p) {
+            return p.getAttribute('stroke-width') === '1.5';
+        })[0];
+        var hp = histPath.getPointAtLength(0);
+        var hBox = chartSvg().getBoundingClientRect();
+        var hsc = hBox.width / parseFloat(chartSvg().getAttribute('width'));
+        chartSvg().dispatchEvent(new MouseEvent('mousemove', { bubbles: true,
+            clientX: hBox.left + (hp.x + 70) * hsc, clientY: hBox.top + (hp.y + 60) * hsc }));
+        var hTip = chartSvg().querySelector('svg.rate-tooltip');
+        var hTexts = hTip ? Array.from(hTip.querySelectorAll('text')).map(function (t) { return t.textContent; }) : [];
+        smokeLog('yearly overlay: hovering a corner titles the tooltip with the year',
+            !!hTip && hTip.style.visibility === 'visible' && hTexts.some(function (t) { return /^\\d{4}$/.test(t); }),
+            hTexts.join(' | '));
+        chartSvg().dispatchEvent(new MouseEvent('mousemove', { bubbles: true,
+            clientX: hBox.left + 1, clientY: hBox.top + 1 }));
         updateUrl();
-        smokeLog('url carries est=yearly', location.search.indexOf('est=yearly') >= 0, location.search);
-        history.pushState({}, '', '?rate=true&est=yearly');
+        smokeLog('url carries yearly=true', location.search.indexOf('yearly=true') >= 0, location.search);
+        document.getElementById('yearly-counts').checked = false;
+        document.getElementById('yearly-counts').dispatchEvent(new Event('change'));
+        smokeLog('yearly overlay removed when unchecked',
+            lastCfg().data.datasets.filter(function (d) { return d.label === 'yearly counts'; }).length === 0 &&
+            rateData.length === 2);
+        updateUrl();
+        smokeLog('yearly param dropped when unchecked', location.search.indexOf('yearly=') < 0, location.search);
+        history.pushState({}, '', '?rate=true&yearly=true');
         parseUrlParams();
-        smokeLog('est=yearly URL parameter parsed', document.getElementById('rate-estimator').value === 'yearly');
+        smokeLog('yearly=true URL parameter parsed', document.getElementById('yearly-counts').checked === true);
+        document.getElementById('yearly-counts').checked = false;
+        document.getElementById('rate-estimator').value = 'blocks';
+        updateChart();
 
         // Every rate control must redraw through its real change event
-        var controlIds = ['rate-estimator', 'bin-width', 'blocks-p0', 'wsb-fit'];
+        var controlIds = ['rate-estimator', 'bin-width', 'blocks-p0', 'wsb-fit', 'yearly-counts'];
         var allWired = controlIds.every(function (id) {
             var before = nCfg();
             document.getElementById(id).dispatchEvent(new Event('change'));
