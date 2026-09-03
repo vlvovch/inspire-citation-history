@@ -2573,7 +2573,10 @@
                                 bar.setAttribute('y', top.toFixed(1));
                                 bar.setAttribute('width', (x1 - x0 - 2 * gap).toFixed(1));
                                 bar.setAttribute('height', (innerH - top).toFixed(1));
-                                bar.setAttribute('fill', hexToRgba(d.paper.color, 0.3));
+                                // Neutral gray fill so the bars read as
+                                // background data, with the paper's color
+                                // only in the outline
+                                bar.setAttribute('fill', 'rgba(120, 124, 130, 0.18)');
                                 bar.setAttribute('stroke', d.paper.color);
                                 bar.setAttribute('stroke-width', '1.5');
                                 bars.appendChild(bar);
