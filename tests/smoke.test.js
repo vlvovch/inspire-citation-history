@@ -263,17 +263,21 @@ document.addEventListener('DOMContentLoaded', () => {
         smokeLog('yearly overlay: one histogram per paper on top of the estimate',
             histDs.length === 2 && cfgY.data.datasets[0].label.indexOf('Paper A') === 0,
             'hist=' + histDs.length);
-        var histOutlines = Array.from(chartSvg().querySelectorAll('path.rate-hist-outline'));
-        smokeLog('yearly overlay: histogram bars rise from the zero baseline',
-            histOutlines.length === 2 && histOutlines.every(function (p) {
-                var dd = p.getAttribute('d');
-                var base = parseFloat(chartSvg().getAttribute('height')) - 110; // margins: top 60, bottom 50
-                var firstY = parseFloat(dd.slice(1).split('L')[0].split(',')[1]);
-                var lastY = parseFloat(dd.split('L').pop().split(',')[1]);
-                return Math.abs(firstY - base) < 1 && Math.abs(lastY - base) < 1 &&
-                    String(p.getAttribute('fill')).indexOf('rgba') === 0;
+        var histGroups = Array.from(chartSvg().querySelectorAll('g.rate-hist-bars'));
+        var histBase = parseFloat(chartSvg().getAttribute('height')) - 110; // margins: top 60, bottom 50
+        smokeLog('yearly overlay: separated filled bars on the zero baseline',
+            histGroups.length === 2 && histGroups.every(function (g) {
+                var rects = Array.from(g.querySelectorAll('rect'));
+                return rects.length >= 4 && rects.every(function (r, i, a) {
+                    var bottomOk = Math.abs(parseFloat(r.getAttribute('y')) +
+                        parseFloat(r.getAttribute('height')) - histBase) < 1;
+                    var gapOk = i === 0 || parseFloat(r.getAttribute('x')) >
+                        parseFloat(a[i - 1].getAttribute('x')) + parseFloat(a[i - 1].getAttribute('width')) + 0.5;
+                    return bottomOk && gapOk && String(r.getAttribute('fill')).indexOf('rgba') === 0;
+                });
             }),
-            'outlines=' + histOutlines.length);
+            'groups=' + histGroups.length + ' rects=' +
+            histGroups.map(function (g) { return g.querySelectorAll('rect').length; }).join(','));
         smokeLog('yearly overlay: legend still lists only the papers', legendRows().length === 2,
             legendRows().map(function (t) { return t.textContent; }).join(' | '));
         var yearlySeries = rateData.filter(function (r) { return r.estimator === 'yearly'; });
@@ -283,10 +287,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 return Number.isInteger(p.y) && p.lo === p.y && p.hi === p.y && typeof p.yearLabel === 'string';
             }),
             JSON.stringify(yearlySeries.length ? yearlySeries[0].points.map(function (p) { return p.y; }) : []));
-        // Hover the first histogram corner: title is the bare year
-        // (the hidden source line's first point sits exactly on that corner)
-        var srcPath = histOutlines[0].nextElementSibling;
-        var hp = srcPath.getPointAtLength(0);
+        // Hover the first bar's top-left corner: title is the bare year
+        var firstBar = histGroups[0].querySelector('rect');
+        var hp = { x: parseFloat(firstBar.getAttribute('x')), y: parseFloat(firstBar.getAttribute('y')) };
         var hBox = chartSvg().getBoundingClientRect();
         var hsc = hBox.width / parseFloat(chartSvg().getAttribute('width'));
         chartSvg().dispatchEvent(new MouseEvent('mousemove', { bubbles: true,

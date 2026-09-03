@@ -2555,24 +2555,31 @@
                     } else if (d.kind === 'tail') {
                         path.setAttribute('stroke-dasharray', '7,7');
                     } else if (d.kind === 'hist') {
-                        // Redraw as a histogram: bars rising from the zero
-                        // baseline with sharp edges and a light fill (the
-                        // library's own monotone line is hidden)
+                        // Redraw as simple separated bars, one per year,
+                        // rising from the zero baseline, behind the curves
+                        // (the library's own monotone line is hidden)
                         path.setAttribute('display', 'none');
                         if (d.pixels && d.pixels.length >= 2) {
-                            const hp = document.createElementNS(NS, 'path');
-                            hp.setAttribute('class', 'rate-hist-outline');
-                            let dd = 'M' + d.pixels[0].x.toFixed(1) + ',' + innerH.toFixed(1);
-                            d.pixels.forEach(q => {
-                                dd += 'L' + q.x.toFixed(1) + ',' + q.y.toFixed(1);
-                            });
-                            dd += 'L' + d.pixels[d.pixels.length - 1].x.toFixed(1) + ',' + innerH.toFixed(1);
-                            hp.setAttribute('d', dd);
-                            hp.setAttribute('stroke', d.paper.color);
-                            hp.setAttribute('stroke-width', '1.5');
-                            hp.setAttribute('fill', hexToRgba(d.paper.color, 0.1));
-                            if (filterAttr) hp.setAttribute('filter', filterAttr);
-                            graphG.insertBefore(hp, path);
+                            const bars = document.createElementNS(NS, 'g');
+                            bars.setAttribute('class', 'rate-hist-bars');
+                            for (let b = 0; b + 1 < d.pixels.length; b += 2) {
+                                const x0 = d.pixels[b].x;
+                                const x1 = d.pixels[b + 1].x;
+                                const top = d.pixels[b].y;
+                                const gap = Math.min(3, Math.max(1, 0.06 * (x1 - x0)));
+                                if (innerH - top < 0.5 || x1 - x0 - 2 * gap < 1) continue;
+                                const bar = document.createElementNS(NS, 'rect');
+                                bar.setAttribute('x', (x0 + gap).toFixed(1));
+                                bar.setAttribute('y', top.toFixed(1));
+                                bar.setAttribute('width', (x1 - x0 - 2 * gap).toFixed(1));
+                                bar.setAttribute('height', (innerH - top).toFixed(1));
+                                bar.setAttribute('fill', hexToRgba(d.paper.color, 0.3));
+                                bar.setAttribute('stroke', d.paper.color);
+                                bar.setAttribute('stroke-width', '1.5');
+                                bars.appendChild(bar);
+                            }
+                            if (filterAttr) bars.setAttribute('filter', filterAttr);
+                            graphG.insertBefore(bars, lines[0]);
                         }
                     }
                     if (groups[i]) groups[i].remove();
