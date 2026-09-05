@@ -372,8 +372,11 @@
         // --------------------------------
         // Chart-only rendering for iframes. The parent window receives a
         // "stats" message after every render (per-record smooth-rate series
-        // and totals) and can switch views with
-        //   iframe.contentWindow.postMessage({type:'set', params:{rate:true}}, '*')
+        // and totals, plus the Bayesian-blocks segments while that estimator
+        // is shown) and can switch views with
+        //   iframe.contentWindow.postMessage({type:'set', params:{...}}, '*')
+        // where params may carry rate (boolean), est ('smooth' | 'binned' |
+        // 'blocks') and p0 (blocks sensitivity: 0.05 | 0.3 | 0.9)
         const EMBED = new URLSearchParams(window.location.search).get('embed') === '1';
 
         function postEmbedMessage(payload) {
@@ -385,21 +388,38 @@
 
         function postEmbedStats() {
             if (!EMBED || window.parent === window) return;
+            const showRate = document.getElementById('show-rate').checked;
+            const estimator = document.getElementById('rate-estimator').value;
+            const blocksP0 = parseFloat(document.getElementById('blocks-p0').value) || BLOCKS_P0;
+            const ms = x => x instanceof Date ? x.getTime() : new Date(x).getTime();
             const series = [];
             Object.entries(recidData).forEach(([recid, data]) => {
                 const record = data.citation_record;
                 if (!record || !record.date) return;
                 const smooth = computeSmoothRateSeries(record, 0, 0);
-                series.push({
+                const entry = {
                     recid: Number(recid),
                     refname: record.refname || '',
                     total: record.total_citations || record.citation_dates.length,
                     widthMonths: smooth.widthMonths,
                     points: smooth.points.map(p => ({
-                        t: p.x instanceof Date ? p.x.getTime() : new Date(p.x).getTime(),
-                        y: p.y, lo: p.lo, hi: p.hi, partial: !!p.partial
+                        t: ms(p.x), y: p.y, lo: p.lo, hi: p.hi, partial: !!p.partial
                     }))
-                });
+                };
+                // The blocks segmentation only while it is what the chart
+                // shows, so the parent can list the change points; one entry
+                // per block, dated at its true start
+                if (showRate && estimator === 'blocks') {
+                    const blocks = computeBlocksRateSeries(record, 0, blocksP0);
+                    entry.blocks = {
+                        p0: blocksP0,
+                        segments: blocks.points.filter(p => !p.dup).map(p => ({
+                            t: ms(p.trueX), y: p.y, lo: p.lo, hi: p.hi, n: p.n,
+                            widthMonths: p.w
+                        }))
+                    };
+                }
+                series.push(entry);
             });
             postEmbedMessage({ type: 'stats', series: series });
         }
@@ -420,10 +440,20 @@
                     return;
                 }
                 if (d.type !== 'set' || !d.params) return;
+                let changed = false;
                 if (typeof d.params.rate === 'boolean') {
                     document.getElementById('show-rate').checked = d.params.rate;
-                    updateChart();
+                    changed = true;
                 }
+                if (['smooth', 'binned', 'blocks'].includes(d.params.est)) {
+                    document.getElementById('rate-estimator').value = d.params.est;
+                    changed = true;
+                }
+                if (['0.05', '0.3', '0.9'].includes(String(d.params.p0))) {
+                    document.getElementById('blocks-p0').value = String(d.params.p0);
+                    changed = true;
+                }
+                if (changed) updateChart();
             });
         }
 
