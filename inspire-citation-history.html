@@ -405,6 +405,11 @@
                     recid: Number(recid),
                     refname: record.refname || '',
                     total: record.total_citations || record.citation_dates.length,
+                    // When INSPIRE was last asked (ms since epoch): the count
+                    // is refreshed on every visit, the citing-record list
+                    // behind the curve may come from the day-long cache
+                    countFetchedAt: record.count_fetched_at || null,
+                    fetchedAt: record.fetched_at || null,
                     widthMonths: smooth.widthMonths,
                     points: smooth.points.map(p => ({
                         t: ms(p.x), y: p.y, lo: p.lo, hi: p.hi, partial: !!p.partial
@@ -764,7 +769,7 @@
                     return null;
                 }
                 const age = (nowMs || Date.now()) - (entry.savedAt || 0);
-                return { record: entry.record, fresh: age >= 0 && age < CACHE_TTL_MS };
+                return { record: entry.record, fresh: age >= 0 && age < CACHE_TTL_MS, savedAt: entry.savedAt || 0 };
             } catch (e) {
                 try { storage.removeItem(key); } catch (e2) { /* ignore */ }
                 return null;
@@ -780,6 +785,17 @@
             for (let i = 0; i < Math.min(count, entries.length); i++) {
                 try { storage.removeItem(entries[i].key); } catch (e) { /* ignore */ }
             }
+        }
+
+        // Rewrite a cached record in place, keeping the entry's savedAt (the
+        // age of its citing-record list), e.g. after a count refresh
+        function cacheUpdate(storage, recid, record) {
+            const key = CACHE_PREFIX + recid;
+            try {
+                const entry = JSON.parse(storage.getItem(key) || 'null');
+                if (!entry) return;
+                storage.setItem(key, JSON.stringify({ savedAt: entry.savedAt || 0, record: record }));
+            } catch (e) { /* ignore */ }
         }
 
         function cacheSave(storage, recid, record, nowMs) {
@@ -827,8 +843,14 @@
                     const n = cached.record.citation_dates.length;
                     progressCallback(n, n);
                 }
+                // Entries written before the stamps existed date from when
+                // they were saved
+                if (!cached.record.fetched_at) cached.record.fetched_at = cached.savedAt;
+                if (!cached.record.count_fetched_at) cached.record.count_fetched_at = cached.savedAt;
                 if (!cached.fresh) {
                     revalidateCachedRecord(recid);
+                } else {
+                    refreshCitationCount(recid, cached.record);
                 }
                 return [cached.record];
             }
@@ -837,6 +859,34 @@
                 cacheSave(storage, recid, result[0]);
             }
             return result;
+        }
+
+        // The headline count is one small request, so it is read afresh on
+        // every visit even while the citing-record list (the expensive part)
+        // is served from the day-long cache — the count shown then matches
+        // INSPIRE's record page, and the embed's stats carry both ages
+        const countRefreshing = new Set();
+        function refreshCitationCount(recid, record) {
+            if (countRefreshing.has(recid)) return;
+            countRefreshing.add(recid);
+            (async () => {
+                try {
+                    const response = await inspireFetch(`https://inspirehep.net/api/literature/${recid}?fields=citation_count`);
+                    if (!response.ok) return;
+                    const data = await response.json();
+                    const count = data && data.metadata ? data.metadata.citation_count : undefined;
+                    if (typeof count !== 'number') return;
+                    record.total_citations = count;
+                    record.count_fetched_at = Date.now();
+                    const storage = safeLocalStorage();
+                    if (storage) cacheUpdate(storage, recid, record);
+                    postEmbedStats();
+                } catch (error) {
+                    console.error(`Citation count refresh failed for recid ${recid}:`, error);
+                } finally {
+                    countRefreshing.delete(recid);
+                }
+            })();
         }
 
         // Refetch a stale record in the background; update the cache, the
@@ -880,7 +930,7 @@
         async function get_recid_info(recid) {
             try {
                 const url = `https://inspirehep.net/api/literature/${recid}` +
-                    `?fields=titles,authors,publication_info,collaborations,arxiv_eprints,preprint_date`;
+                    `?fields=titles,authors,publication_info,collaborations,arxiv_eprints,preprint_date,citation_count`;
                 const response = await inspireFetch(url);
 
                 if (!response.ok) {
@@ -898,7 +948,7 @@
         async function get_recid_string(recid) {
             const recid_info = await get_recid_info(recid);
             if (!recid_info) {
-                return ["Unknown", ""];
+                return ["Unknown", "", null];
             }
             
             const metadata = recid_info.metadata || {};
@@ -977,7 +1027,7 @@
             const created_date = recid_info.created || "";
             const preprint_date = (recid_info.metadata || {}).preprint_date || "";
             const date = preprint_date ? (created_date < preprint_date ? created_date : preprint_date) : created_date;
-            return [citation_str, date];
+            return [citation_str, date, typeof metadata.citation_count === 'number' ? metadata.citation_count : null];
         }
         
         // Get citations for a given record ID
@@ -1144,12 +1194,18 @@
                 // Extract dates from all citations
                 const dates_only = allCitations.map(citation => citation.date || "");
                 
+                // The headline is INSPIRE's own citation_count (what its record
+                // page shows); the refersto total can trail it by one while
+                // the search index catches up. Stamps say when each was read.
+                const now = Date.now();
                 return [{
                     recid: recid,
                     date: recid_info[1],
                     refname: recid_info[0],
                     citation_dates: dates_only,
-                    total_citations: totalRecords
+                    total_citations: recid_info[2] != null ? recid_info[2] : totalRecords,
+                    fetched_at: now,
+                    count_fetched_at: now
                 }];
             } catch (error) {
                 console.error(`Failed to retrieve citation data for recid: ${recid}`, error);
