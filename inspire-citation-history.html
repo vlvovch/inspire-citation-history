@@ -390,6 +390,17 @@
             } catch (e) { /* ignore */ }
         }
 
+        const RECENT_WINDOW_DAYS = 90;
+        function countRecent(record, days) {
+            const since = Date.now() - days * 86400000;
+            let n = 0;
+            for (const s of (record.citation_dates || [])) {
+                const t = new Date(s).getTime();
+                if (!isNaN(t) && t >= since) n++;
+            }
+            return n;
+        }
+
         function postEmbedStats() {
             if (!EMBED || window.parent === window) return;
             const showRate = document.getElementById('show-rate').checked;
@@ -410,6 +421,11 @@
                     // behind the curve may come from the day-long cache
                     countFetchedAt: record.count_fetched_at || null,
                     fetchedAt: record.fetched_at || null,
+                    // Citing records dated in the trailing window, for a
+                    // parent's "in the last N days" line: the curve's own
+                    // dates, and a record dated ahead of today (journal
+                    // issue dating) still counts as recent
+                    recent: { windowDays: RECENT_WINDOW_DAYS, count: countRecent(record, RECENT_WINDOW_DAYS) },
                     widthMonths: smooth.widthMonths,
                     points: smooth.points.map(p => ({
                         t: ms(p.x), y: p.y, lo: p.lo, hi: p.hi, partial: !!p.partial
